@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { readSettings } from "./settings";
 import { logger } from "./logger";
 
 interface ChatMessage {
@@ -6,15 +7,36 @@ interface ChatMessage {
   content: string;
 }
 
-function endpoint(path: string): string {
-  const base = config.llm.baseUrl.replace(/\/+$/, "");
-  return `${base}${path}`;
+/** 取当前生效的 LLM 配置：先看运行时 settings，再回退到 env。热更新支持。 */
+async function activeLLM(): Promise<{ baseUrl: string; apiKey: string; model: string }> {
+  try {
+    const s = await readSettings();
+    if (s.llm.baseUrl && s.llm.apiKey) {
+      return {
+        baseUrl: s.llm.baseUrl,
+        apiKey: s.llm.apiKey,
+        model: s.llm.model,
+      };
+    }
+  } catch {
+    /* 读盘失败 → 用 env 兜底 */
+  }
+  return {
+    baseUrl: config.llm.baseUrl,
+    apiKey: config.llm.apiKey,
+    model: config.llm.model,
+  };
 }
 
-function authHeaders(): Record<string, string> {
+function endpoint(base: string, path: string): string {
+  const b = base.replace(/\/+$/, "");
+  return `${b}${path}`;
+}
+
+function authHeaders(apiKey: string): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${config.llm.apiKey}`,
+    Authorization: `Bearer ${apiKey}`,
   };
 }
 
@@ -24,11 +46,12 @@ export async function chatJSON(
   user: string,
   requestId: string,
 ): Promise<unknown> {
-  const res = await fetch(endpoint("/chat/completions"), {
+  const llm = await activeLLM();
+  const res = await fetch(endpoint(llm.baseUrl, "/chat/completions"), {
     method: "POST",
-    headers: authHeaders(),
+    headers: authHeaders(llm.apiKey),
     body: JSON.stringify({
-      model: config.llm.model,
+      model: llm.model,
       temperature: 0.3,
       response_format: { type: "json_object" },
       messages: [
@@ -58,11 +81,12 @@ export async function streamChat(
   onToken: (token: string) => void,
   requestId: string,
 ): Promise<string> {
-  const res = await fetch(endpoint("/chat/completions"), {
+  const llm = await activeLLM();
+  const res = await fetch(endpoint(llm.baseUrl, "/chat/completions"), {
     method: "POST",
-    headers: authHeaders(),
+    headers: authHeaders(llm.apiKey),
     body: JSON.stringify({
-      model: config.llm.model,
+      model: llm.model,
       temperature: 0.6,
       stream: true,
       messages: [

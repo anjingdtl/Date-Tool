@@ -121,6 +121,9 @@ export default function DashboardPage() {
           <Link className="btn" href="/">
             返回
           </Link>
+          <Link className="btn btn-icon" href="/settings" aria-label="设置" title="设置">
+            <span aria-hidden>⚙</span>
+          </Link>
           <button
             className="btn btn-primary"
             onClick={startAnalysis}
@@ -159,13 +162,14 @@ export default function DashboardPage() {
             streaming={streaming}
             provider={provider}
           />
-          <div className="grid grid-3">
+          <div className="grid grid-charts">
             {charts.map((c, i) => (
               <ChartCard
                 key={c.id}
                 spec={c}
                 option={options[i]}
                 rows={detail.previewRows}
+                index={i}
               />
             ))}
           </div>

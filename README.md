@@ -29,6 +29,20 @@
 
 ## 🚀 快速开始
 
+### 一键启动（推荐 · Windows）
+
+双击项目根目录下的 **`start-dev.vbs`**：
+- ✅ 不弹 cmd 黑窗口
+- ✅ 自动清理 3000 端口旧进程
+- ✅ 自动用默认浏览器打开 http://localhost:3000
+- ✅ 启动结束弹一个简洁提示框
+
+需要停止服务时，双击 **`stop-dev.bat`**。
+
+> 日志写在 `logs/dev-server.log`（VBS 启动器也会同时落盘一份）。
+
+### 命令行启动（跨平台 / 调试）
+
 ```bash
 # 1. 安装依赖
 npm install
@@ -40,6 +54,8 @@ cp .env.example .env
 npm run dev
 # 打开 http://localhost:3000
 ```
+
+调试时也可以直接跑 `start-dev.bat`（会弹 cmd 窗口，日志同时输出到屏幕和 `logs/dev-server.log`）。
 
 生产构建：
 
