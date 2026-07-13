@@ -1,24 +1,49 @@
 @echo off
-chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
 cd /d "%~dp0"
 
-echo ════════════════════════════════════════════
-echo    Date-Tool · 一键启动开发服务器
-echo ════════════════════════════════════════════
+echo ============================================================
+echo    Date-Tool Dev Server Launcher
+echo ============================================================
+echo.
 
-:: 检查 3000 端口是否被占用，若占用则结束旧进程
+REM Check if npm is available in PATH
+where npm >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] npm not found in PATH.
+    echo [ERROR] Please install Node.js or add npm to your PATH.
+    echo.
+    pause
+    exit /b 1
+)
+
+REM Check if node_modules exists; warn if not
+if not exist "node_modules" (
+    echo [WARN] node_modules not found. Running npm install first...
+    npm install
+    if %errorlevel% neq 0 (
+        echo [ERROR] npm install failed.
+        pause
+        exit /b 1
+    )
+)
+
+REM Kill any process listening on port 3000
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000" ^| findstr "LISTENING"') do (
-    echo [INFO] 发现 3000 端口被占用 (PID: %%a)，正在结束旧进程...
+    echo [INFO] Found process on port 3000 (PID: %%a). Stopping it...
     taskkill /PID %%a /F >nul 2>&1
     timeout /t 2 /nobreak >nul
 )
 
-echo [INFO] 正在启动 Next.js 开发服务器...
-echo [INFO] 启动成功后，请访问 http://localhost:3000
+echo [INFO] Starting Next.js development server...
+echo [INFO] Open http://localhost:3000 once the server is ready.
 echo.
 
 npm run dev
 
-pause
+if %errorlevel% neq 0 (
+    echo.
+    echo [ERROR] Dev server exited with an error.
+    pause
+)
