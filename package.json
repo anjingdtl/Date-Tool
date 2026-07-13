@@ -1,0 +1,29 @@
+{
+  "name": "wecom-ops-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "企微集约化托管运营可视化数据仪表 —— 导入数据，LLM 自动分析，生成可视化看板",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "echarts": "5.5.1",
+    "next": "14.2.15",
+    "papaparse": "5.4.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "xlsx": "0.18.5",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "@types/papaparse": "5.3.14",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "typescript": "5.5.3"
+  }
+}
