@@ -22,7 +22,7 @@ REM Check if node_modules exists; warn if not
 if not exist "node_modules" (
     echo [WARN] node_modules not found. Running npm install first...
     npm install
-    if %errorlevel% neq 0 (
+    if !errorlevel! neq 0 (
         echo [ERROR] npm install failed.
         pause
         exit /b 1
@@ -31,9 +31,9 @@ if not exist "node_modules" (
 
 REM Kill any process listening on port 3000
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000" ^| findstr "LISTENING"') do (
-    echo [INFO] Found process on port 3000 (PID: %%a). Stopping it...
+    echo [INFO] Killing old process on port 3000 - PID: %%a
     taskkill /PID %%a /F >nul 2>&1
-    timeout /t 2 /nobreak >nul
+    ping -n 3 127.0.0.1 >nul
 )
 
 echo [INFO] Starting Next.js development server...
