@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Verdigris · 液态玻璃预览 · Date-Tool</title>
+    <link rel="stylesheet" href="./app/globals.css" />
+    <style>
+      /* —— 预览页专用 —— */
+      body {
+        padding-bottom: 40px;
+      }
+      .preview-nav {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: rgba(15, 42, 41, 0.72);
+        backdrop-filter: blur(20px) saturate(180%);
+        -webkit-backdrop-filter: blur(20px) saturate(180%);
+        border-bottom: 1px solid rgba(245, 241, 235, 0.12);
+        padding: 12px 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        font-size: 13px;
+        color: rgba(245, 241, 235, 0.72);
+      }
+      .preview-nav strong {
+        color: #c9a87c;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+      }
+      .preview-nav .tab-group {
+        display: flex;
+        gap: 6px;
+      }
+      .preview-nav .tab {
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: rgba(245, 241, 235, 0.06);
+        border: 1px solid rgba(245, 241, 235, 0.12);
+        cursor: pointer;
+        font-size: 12.5px;
+        color: rgba(245, 241, 235, 0.72);
+        transition: all 0.2s;
+      }
+      .preview-nav .tab:hover {
+        background: rgba(201, 168, 124, 0.15);
+        border-color: rgba(201, 168, 124, 0.4);
+        color: #f5f1eb;
+      }
+      .preview-nav .tab.active {
+        background: linear-gradient(180deg, #c9a87c, #a88560);
+        color: #0f2a29;
+        border-color: rgba(245, 241, 235, 0.3);
+        font-weight: 600;
+      }
+      .preview-section {
+        display: none;
+      }
+      .preview-section.active {
+        display: block;
+      }
+      /* —— 首页演示用 —— */
+      .ds-item-grid {
+        display: grid;
+        gap: 12px;
+      }
+      .swatch-row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 24px;
+      }
+      .swatch {
+        width: 110px;
+        text-align: center;
+      }
+      .swatch .chip {
+        height: 64px;
+        border-radius: 12px;
+        margin-bottom: 8px;
+        border: 1px solid rgba(245, 241, 235, 0.16);
+        box-shadow: inset 0 1px 0 rgba(245, 241, 235, 0.1);
+      }
+      .swatch .name {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--text-dim);
+        letter-spacing: 0.04em;
+      }
+      .component-lab {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+      }
+      @media (max-width: 900px) {
+        .component-lab {
+          grid-template-columns: 1fr;
+        }
+      }
+      /* —— 假图表 —— */
+      .fake-chart {
+        height: 240px;
+        position: relative;
+        display: flex;
+        align-items: flex-end;
+        gap: 14px;
+        padding: 16px 8px 28px;
+      }
+      .fake-bar {
+        flex: 1;
+        background: linear-gradient(
+          180deg,
+          rgba(201, 168, 124, 0.9) 0%,
+          rgba(168, 133, 96, 0.7) 100%
+        );
+        border-radius: 6px 6px 2px 2px;
+        box-shadow:
+          inset 0 1px 0 rgba(245, 241, 235, 0.25),
+          0 4px 12px rgba(8, 22, 21, 0.4);
+        position: relative;
+        transition: transform 0.3s ease;
+      }
+      .fake-bar:hover {
+        transform: translateY(-4px);
+      }
+      .fake-bar.alt {
+        background: linear-gradient(
+          180deg,
+          rgba(127, 184, 154, 0.85) 0%,
+          rgba(106, 158, 132, 0.65) 100%
+        );
+      }
+      .fake-bar .label {
+        position: absolute;
+        bottom: -22px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 11px;
+        color: var(--text-faint);
+        font-family: var(--font-mono);
+        letter-spacing: 0.04em;
+      }
+      .kpi-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 16px;
+        margin-bottom: 20px;
+      }
+      .kpi {
+        position: relative;
+        padding: 20px;
+        background: var(--glass-2);
+        border: 1px solid var(--glass-rim);
+        border-radius: 18px;
+        backdrop-filter: blur(20px) saturate(170%);
+        -webkit-backdrop-filter: blur(20px) saturate(170%);
+        box-shadow:
+          inset 0 1px 0 rgba(245, 241, 235, 0.1),
+          0 8px 28px rgba(8, 22, 21, 0.4);
+        overflow: hidden;
+      }
+      .kpi::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 50%;
+        background: linear-gradient(
+          180deg,
+          rgba(245, 241, 235, 0.08) 0%,
+          transparent 100%
+        );
+        pointer-events: none;
+      }
+      .kpi .label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        color: var(--text-faint);
+        margin-bottom: 8px;
+      }
+      .kpi .value {
+        font-family: var(--font-display);
+        font-size: 36px;
+        font-weight: 600;
+        color: var(--accent);
+        letter-spacing: -0.02em;
+        line-height: 1;
+      }
+      .kpi .trend {
+        margin-top: 6px;
+        font-size: 12px;
+        color: #b6d4c2;
+        font-family: var(--font-mono);
+      }
+      .kpi .trend.down {
+        color: #e8a89c;
+      }
+      /* —— 装饰光晕 —— */
+      .glow-orb {
+        position: fixed;
+        pointer-events: none;
+        border-radius: 50%;
+        filter: blur(80px);
+        z-index: 0;
+      }
+      .glow-orb.g1 {
+        width: 380px;
+        height: 380px;
+        background: radial-gradient(
+          circle,
+          rgba(201, 168, 124, 0.35) 0%,
+          transparent 70%
+        );
+        top: 20%;
+        right: -120px;
+        animation: orbFloat 14s ease-in-out infinite;
+      }
+      .glow-orb.g2 {
+        width: 480px;
+        height: 480px;
+        background: radial-gradient(
+          circle,
+          rgba(127, 184, 154, 0.18) 0%,
+          transparent 70%
+        );
+        bottom: -180px;
+        left: -160px;
+        animation: orbFloat 18s ease-in-out infinite reverse;
+      }
+      @keyframes orbFloat {
+        0%,
+        100% {
+          transform: translate(0, 0);
+        }
+        50% {
+          transform: translate(-40px, 30px);
+        }
+      }
+      .container {
+        position: relative;
+        z-index: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 装饰光晕 -->
+    <div class="glow-orb g1"></div>
+    <div class="glow-orb g2"></div>
+
+    <!-- 预览导航 -->
+    <nav class="preview-nav">
+      <div>
+        <strong>VERDIGRIS</strong> · 液态玻璃预览 · Date-Tool
+      </div>
+      <div class="tab-group">
+        <button class="tab active" onclick="showTab('home', this)">
+          首页
+        </button>
+        <button class="tab" onclick="showTab('dashboard', this)">
+          Dashboard
+        </button>
+        <button class="tab" onclick="showTab('lab', this)">组件实验室</button>
+      </div>
+    </nav>
+
+    <!-- ========== 首页 ========== -->
+    <section class="preview-section active" id="home">
+      <div class="container">
+        <div class="topbar">
+          <div class="brand">
+            <div class="logo">D</div>
+            <div>
+              <h1>企微托管运营 · 数据仪表</h1>
+              <p>导入数据 → LLM 自动分析 → 生成可视化看板</p>
+            </div>
+          </div>
+          <div class="row">
+            <button class="btn">设置</button>
+            <button class="btn btn-primary">新建分析 ✨</button>
+          </div>
+        </div>
+
+        <div class="grid" style="gap: 24px">
+          <div class="card">
+            <p class="section-title">上传数据</p>
+            <div class="dropzone">
+              <div class="big">把 Excel / CSV 拖进来</div>
+              <div class="hint">
+                或点击选择文件 · 支持 .xlsx / .xls / .csv · 单文件 ≤ 15MB
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <p class="section-title">已有数据集</p>
+            <div class="ds-item-grid">
+              <div class="ds-item">
+                <div>
+                  <div class="name">2026Q2 客服坐席效能周报</div>
+                  <div class="meta">
+                    1,284 行 · 12 列 · 客服效能_2026Q2.xlsx
+                  </div>
+                  <div style="margin-top: 10px" class="pill-group">
+                    <span class="badge">已分析</span>
+                    <span class="badge muted">LLM</span>
+                  </div>
+                </div>
+                <div class="row">
+                  <button class="btn">打开看板</button>
+                  <button class="btn">删除</button>
+                </div>
+              </div>
+
+              <div class="ds-item">
+                <div>
+                  <div class="name">企微客户标签覆盖率</div>
+                  <div class="meta">856 行 · 8 列 · 标签覆盖.csv</div>
+                  <div style="margin-top: 10px" class="pill-group">
+                    <span class="badge">已分析</span>
+                    <span class="badge muted">LLM</span>
+                  </div>
+                </div>
+                <div class="row">
+                  <button class="btn">打开看板</button>
+                  <button class="btn">删除</button>
+                </div>
+              </div>
+
+              <div class="ds-item">
+                <div>
+                  <div class="name">3 月线索转化漏斗</div>
+                  <div class="meta">3,402 行 · 6 列 · funnel_03.xlsx</div>
+                  <div style="margin-top: 10px" class="pill-group">
+                    <span class="badge muted">未分析</span>
+                    <span class="badge muted">MOCK</span>
+                  </div>
+                </div>
+                <div class="row">
+                  <button class="btn">打开看板</button>
+                  <button class="btn">删除</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== Dashboard ========== -->
+    <section class="preview-section" id="dashboard">
+      <div class="container">
+        <div class="topbar">
+          <div class="brand">
+            <div class="logo">D</div>
+            <div>
+              <h1>2026Q2 客服坐席效能周报</h1>
+              <p>1,284 行 · 12 列 · 客服效能_2026Q2.xlsx</p>
+            </div>
+          </div>
+          <div class="row">
+            <button class="btn">← 返回</button>
+            <button class="btn btn-primary">重新分析 ✨</button>
+          </div>
+        </div>
+
+        <!-- KPI -->
+        <div class="kpi-row">
+          <div class="kpi">
+            <div class="label">平均首响时长</div>
+            <div class="value">12.4s</div>
+            <div class="trend">↓ 较上周 18.6%</div>
+          </div>
+          <div class="kpi">
+            <div class="label">会话解决率</div>
+            <div class="value">87.2%</div>
+            <div class="trend">↑ 较上周 3.1%</div>
+          </div>
+          <div class="kpi">
+            <div class="label">客户满意度</div>
+            <div class="value">4.62</div>
+            <div class="trend">↑ 较上周 0.08</div>
+          </div>
+          <div class="kpi">
+            <div class="label">超时会话占比</div>
+            <div class="value">5.8%</div>
+            <div class="trend down">↑ 较上周 1.2%</div>
+          </div>
+        </div>
+
+        <div class="grid" style="gap: 20px">
+          <div class="card">
+            <div class="row spread" style="margin-bottom: 14px">
+              <p class="section-title" style="margin: 0">占卜师解读</p>
+              <span class="badge">LLM 实时分析</span>
+            </div>
+            <div class="banner warn" style="margin-bottom: 16px">
+              本季度坐席效能整体提升明显，首响时长显著下降，但周四、周五出现双峰期超时异常，建议排查排班密度。
+            </div>
+            <ul class="insight-list" style="margin-bottom: 18px">
+              <li>
+                周三、周四是首响时长双峰（19.2s、17.8s），建议在 10:00-11:00
+                增加值班坐席 2-3 人。
+              </li>
+              <li>
+                满意度高的会话中，76% 来自"技术专席"，可考虑将工单优先派给该组。
+              </li>
+              <li>
+                5 月 17 日出现极端长尾（最长达 8 分 22 秒），关联当天系统故障工单。
+              </li>
+              <li>
+                客户标签"VIP"群体满意度连续三周下滑至 4.18，建议回访 + 复盘 SOP。
+              </li>
+            </ul>
+            <div class="narrative">
+              整体而言，2026Q2 客服团队呈现出"基础效能稳步提升、客户体验差异化凸显"的双轨态势……
+            </div>
+          </div>
+
+          <div class="grid grid-3">
+            <div class="chart-card">
+              <p class="chart-title">每日首响时长分布</p>
+              <p class="chart-desc">单位：秒 · 2026-05-01 至 2026-06-30</p>
+              <div class="fake-chart">
+                <div class="fake-bar" style="height: 45%">
+                  <span class="label">周一</span>
+                </div>
+                <div class="fake-bar" style="height: 62%">
+                  <span class="label">周二</span>
+                </div>
+                <div class="fake-bar alt" style="height: 90%">
+                  <span class="label">周三</span>
+                </div>
+                <div class="fake-bar alt" style="height: 84%">
+                  <span class="label">周四</span>
+                </div>
+                <div class="fake-bar" style="height: 70%">
+                  <span class="label">周五</span>
+                </div>
+                <div class="fake-bar" style="height: 28%">
+                  <span class="label">周六</span>
+                </div>
+                <div class="fake-bar" style="height: 22%">
+                  <span class="label">周日</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="chart-card">
+              <p class="chart-title">坐席满意度排行</p>
+              <p class="chart-desc">TOP 8 坐席 · 平均分（满分 5）</p>
+              <div class="fake-chart">
+                <div class="fake-bar" style="height: 92%">
+                  <span class="label">张明</span>
+                </div>
+                <div class="fake-bar" style="height: 88%">
+                  <span class="label">李雷</span>
+                </div>
+                <div class="fake-bar" style="height: 84%">
+                  <span class="label">陈雪</span>
+                </div>
+                <div class="fake-bar alt" style="height: 78%">
+                  <span class="label">王岚</span>
+                </div>
+                <div class="fake-bar" style="height: 74%">
+                  <span class="label">赵阳</span>
+                </div>
+                <div class="fake-bar" style="height: 70%">
+                  <span class="label">孙博</span>
+                </div>
+                <div class="fake-bar" style="height: 66%">
+                  <span class="label">周静</span>
+                </div>
+                <div class="fake-bar alt" style="height: 62%">
+                  <span class="label">吴桐</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="chart-card">
+              <p class="chart-title">原始数据样本</p>
+              <p class="chart-desc">前 5 行 · 仅展示</p>
+              <div class="table-wrap" style="margin-top: 4px">
+                <table class="data">
+                  <thead>
+                    <tr>
+                      <th>日期</th>
+                      <th>坐席</th>
+                      <th>首响(s)</th>
+                      <th>满意度</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>05-01</td>
+                      <td>张明</td>
+                      <td>11.2</td>
+                      <td>4.8</td>
+                    </tr>
+                    <tr>
+                      <td>05-01</td>
+                      <td>李雷</td>
+                      <td>13.4</td>
+                      <td>4.6</td>
+                    </tr>
+                    <tr>
+                      <td>05-02</td>
+                      <td>陈雪</td>
+                      <td>10.8</td>
+                      <td>4.7</td>
+                    </tr>
+                    <tr>
+                      <td>05-02</td>
+                      <td>王岚</td>
+                      <td>18.2</td>
+                      <td>4.2</td>
+                    </tr>
+                    <tr>
+                      <td>05-03</td>
+                      <td>赵阳</td>
+                      <td>14.1</td>
+                      <td>4.5</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 组件实验室 ========== -->
+    <section class="preview-section" id="lab">
+      <div class="container">
+        <div class="topbar">
+          <div class="brand">
+            <div class="logo">D</div>
+            <div>
+              <h1>组件实验室</h1>
+              <p>色板 · 按钮 · 徽章 · 提示 · 玻璃面 一览</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom: 20px">
+          <p class="section-title">核心色板</p>
+          <div class="swatch-row">
+            <div class="swatch">
+              <div
+                class="chip"
+                style="
+                  background: #1f4a48;
+                  box-shadow:
+                    inset 0 1px 0 rgba(245, 241, 235, 0.1),
+                    0 6px 16px rgba(8, 22, 21, 0.5);
+                "
+              ></div>
+              <div class="name">#1F4A48 · 墨绿</div>
+            </div>
+            <div class="swatch">
+              <div
+                class="chip"
+                style="
+                  background: #c9a87c;
+                  box-shadow:
+                    inset 0 1px 0 rgba(245, 241, 235, 0.45),
+                    0 6px 16px rgba(201, 168, 124, 0.4);
+                "
+              ></div>
+              <div class="name">#C9A87C · 古铜金</div>
+            </div>
+            <div class="swatch">
+              <div
+                class="chip"
+                style="
+                  background: #f5f1eb;
+                  box-shadow:
+                    inset 0 1px 0 rgba(245, 241, 235, 0.5),
+                    0 6px 16px rgba(8, 22, 21, 0.3);
+                "
+              ></div>
+              <div class="name" style="color: #f5f1eb">#F5F1EB · 米白</div>
+            </div>
+            <div class="swatch">
+              <div
+                class="chip"
+                style="
+                  background: rgba(245, 241, 235, 0.07);
+                  backdrop-filter: blur(20px);
+                  border-color: rgba(245, 241, 235, 0.16);
+                "
+              ></div>
+              <div class="name">glass · 玻璃</div>
+            </div>
+            <div class="swatch">
+              <div
+                class="chip"
+                style="
+                  background: linear-gradient(
+                    180deg,
+                    rgba(220, 190, 146, 1),
+                    rgba(184, 147, 102, 1)
+                  );
+                "
+              ></div>
+              <div class="name">gold gradient</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="component-lab">
+          <div class="card">
+            <p class="section-title">按钮</p>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap">
+              <button class="btn btn-primary">运行分析 ✨</button>
+              <button class="btn">打开看板</button>
+              <button class="btn">设置</button>
+              <button class="btn" style="color: #e8a89c; border-color: rgba(201, 122, 110, 0.35)">
+                删除
+              </button>
+              <button class="btn btn-primary" disabled>分析中…</button>
+            </div>
+            <p
+              style="
+                margin-top: 16px;
+                font-size: 12.5px;
+                color: var(--text-faint);
+                line-height: 1.6;
+              "
+            >
+              Primary：金色玻璃渐变 · hover 金色辉光 + 上浮 · Secondary：
+              米白玻璃面 · Danger：陶土红描边
+            </p>
+          </div>
+
+          <div class="card">
+            <p class="section-title">徽章 / 标签</p>
+            <div
+              style="
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+                margin-bottom: 12px;
+              "
+            >
+              <span class="badge">已分析</span>
+              <span class="badge muted">未分析</span>
+              <span class="badge muted">MOCK</span>
+              <span class="badge">LLM 实时分析</span>
+            </div>
+            <p
+              style="
+                font-size: 12.5px;
+                color: var(--text-faint);
+                line-height: 1.6;
+              "
+            >
+              成功=淡祖母绿 / 中性=米白半透明 / 警告=焦糖金 / 错误=陶土红
+            </p>
+          </div>
+
+          <div class="card">
+            <p class="section-title">提示条</p>
+            <div class="banner warn" style="margin-bottom: 10px">
+              本周四、周五出现超时异常，建议排查排班密度。
+            </div>
+            <div class="banner error">
+              数据集不存在或已删除，请返回首页重新导入。
+            </div>
+          </div>
+
+          <div class="card">
+            <p class="section-title">洞察列表</p>
+            <ul class="insight-list">
+              <li>周三、周四是首响时长双峰，建议增加值班坐席。</li>
+              <li>满意度高的会话中，76% 来自"技术专席"。</li>
+              <li>5 月 17 日出现极端长尾，关联当天系统故障。</li>
+            </ul>
+          </div>
+
+          <div class="card" style="grid-column: 1 / -1">
+            <p class="section-title">排版示意</p>
+            <h1
+              style="
+                font-family: var(--font-display);
+                font-size: 36px;
+                font-weight: 600;
+                letter-spacing: -0.015em;
+                margin: 0 0 8px;
+                color: #f5f1eb;
+              "
+            >
+              博物馆级的克制
+            </h1>
+            <p
+              style="
+                font-size: 14.5px;
+                color: rgba(245, 241, 235, 0.72);
+                line-height: 1.7;
+                margin: 0 0 16px;
+              "
+            >
+              衬线标题用于 Display 级别，注入温度与重量感；正文保持 sans
+              可读性优先；数字用 mono
+              制造实验室般的精确。三层文字层级通过透明度递进，不依赖色相变化。
+            </p>
+            <div
+              style="
+                font-family: var(--font-mono);
+                font-size: 14px;
+                color: var(--accent);
+                letter-spacing: 0.04em;
+              "
+            >
+              1,284 rows · 12 cols · processed in 2.3s
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script>
+      function showTab(id, btn) {
+        document
+          .querySelectorAll(".preview-section")
+          .forEach((s) => s.classList.remove("active"));
+        document
+          .querySelectorAll(".preview-nav .tab")
+          .forEach((t) => t.classList.remove("active"));
+        document.getElementById(id).classList.add("active");
+        btn.classList.add("active");
+      }
+    </script>
+  </body>
+</html>
