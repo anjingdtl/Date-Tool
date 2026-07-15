@@ -17,6 +17,7 @@ import type {
 } from "./types";
 import { normalizeRowsByColumns, recomputeColumnStats } from "./normalize";
 import { generateDataQuality } from "./quality";
+import { logger } from "./logger";
 
 // re-export 保持向后兼容（其它模块从 @/lib/store 导入）
 export { DatasetIdSchema, isValidDatasetId };
@@ -125,33 +126,68 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
+function migratingDir(id: string): string {
+  return path.join(DATASET_DIR, `${id}.migrating`);
+}
+
+/** 最终目录的 meta / rows 是否都存在且可读（用于半成品检测） */
+async function targetComplete(id: string): Promise<boolean> {
+  try {
+    await fs.readFile(metaPath(id), "utf-8");
+    await fs.readFile(rowsPath(id), "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * 旧格式迁移：{id}.json 单文件 → {id}/meta.json + rows.json + analyses.json
- * 保留旧文件为 .bak；迁移失败时不删旧文件（spec 16.5）。
+ * 旧格式迁移：{id}.json 单文件 → {id}/ 三文件（SPEC 13.2）。
+ *
+ * 流程：读旧文件 → 写临时目录 {id}.migrating/ → 验证三 JSON 可读
+ *      → rename 临时目录为最终目录 → rename 旧文件为 .bak。
+ * 失败：删除临时目录，保留旧文件，下次允许重试（SPEC 13.2 失败处理）。
  */
 async function migrateLegacy(id: string): Promise<boolean> {
   const legacy = legacyPath(id);
-  const targetDir = datasetDir(id);
   if (!(await pathExists(legacy))) return false;
-  if (await pathExists(targetDir)) {
-    // 新目录已存在，说明已迁移过；旧文件冗余，改 bak
+
+  // 最终目录已完整 → 仅把冗余旧文件改 bak
+  if (await targetComplete(id)) {
     await fs.rename(legacy, legacyBakPath(id)).catch(() => {});
     return true;
   }
+
+  const tmpDir = migratingDir(id);
+  // 清理上次失败残留的临时目录
+  await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  logger.info("legacy_migration_started", { datasetId: id });
   try {
     const raw = await fs.readFile(legacy, "utf-8");
     const ds = JSON.parse(raw) as StoredDataset;
-    await fs.mkdir(targetDir, { recursive: true });
-    await saveJsonAtomic(metaPath(id), toMeta(ds));
-    await saveJsonAtomic(rowsPath(id), ds.rows ?? []);
+    await fs.mkdir(tmpDir, { recursive: true });
+    await saveJsonAtomic(path.join(tmpDir, "meta.json"), toMeta(ds));
+    await saveJsonAtomic(path.join(tmpDir, "rows.json"), ds.rows ?? []);
     const analyses =
       ds.analyses ?? (ds.analysis ? [ds.analysis] : []);
-    await saveJsonAtomic(analysesPath(id), analyses);
-    // 保留旧文件为 .bak
+    await saveJsonAtomic(path.join(tmpDir, "analyses.json"), analyses);
+    // 验证三个 JSON 可读
+    await fs.readFile(path.join(tmpDir, "meta.json"), "utf-8");
+    await fs.readFile(path.join(tmpDir, "rows.json"), "utf-8");
+    await fs.readFile(path.join(tmpDir, "analyses.json"), "utf-8");
+    // rename 临时目录为最终目录（原子）
+    await fs.rename(tmpDir, datasetDir(id));
+    // rename 旧文件为 .bak
     await fs.rename(legacy, legacyBakPath(id));
+    logger.info("legacy_migration_completed", { datasetId: id });
     return true;
-  } catch {
-    // 迁移失败：保留旧文件只读，不丢失数据
+  } catch (err) {
+    // 失败：删除临时目录，保留旧文件，下次允许重试
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    logger.error("legacy_migration_failed", {
+      datasetId: id,
+      message: err instanceof Error ? err.message : "unknown",
+    });
     return false;
   }
 }
@@ -172,10 +208,27 @@ export async function saveDataset(ds: StoredDataset): Promise<void> {
 export async function getDataset(id: string): Promise<StoredDataset | null> {
   if (!isValidDatasetId(id)) return null;
 
-  // 新目录不存在时尝试迁移旧格式
-  if (!(await pathExists(datasetDir(id)))) {
-    const migrated = await migrateLegacy(id);
-    if (!migrated) return null;
+  const dirExists = await pathExists(datasetDir(id));
+  if (!dirExists) {
+    if (!(await migrateLegacy(id))) return null;
+  } else if (!(await targetComplete(id))) {
+    // 半成品目录（SPEC 13.3）：清理后从 legacy / .bak 恢复并重迁
+    await fs
+      .rm(datasetDir(id), { recursive: true, force: true })
+      .catch(() => {});
+    if (await pathExists(legacyPath(id))) {
+      if (!(await migrateLegacy(id))) return null;
+    } else if (await pathExists(legacyBakPath(id))) {
+      // 仅剩 .bak：恢复为 legacy 后重迁
+      await fs.rename(legacyBakPath(id), legacyPath(id)).catch(() => {});
+      if (!(await migrateLegacy(id))) return null;
+    } else {
+      logger.error("legacy_migration_failed", {
+        datasetId: id,
+        message: "无可恢复的数据源（目录、legacy、bak 均不可用）",
+      });
+      return null;
+    }
   }
 
   try {
