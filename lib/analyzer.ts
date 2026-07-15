@@ -24,6 +24,7 @@ import {
 } from "./llm-prompt";
 import { runLocalAnalysis } from "./analysis";
 import type {
+  AnalysisEvidence,
   AnalysisResult,
   ChartSpec,
   ComputedInsight,
@@ -84,6 +85,20 @@ function applyRenamedTitles(
 
 /* ------------------------- 钩子定义 ------------------------- */
 
+/** SSE final 事件载荷（SPEC 9.2）：LLM/local 完成后一次性发送最终结果 */
+export interface FinalAnalysisPayload {
+  summary: string;
+  insights: string[];
+  charts: ChartSpec[];
+  options: EChartsOption[];
+  narrative?: string;
+  provider: "local" | "local+llm";
+  createdAt: string;
+  evidence?: AnalysisEvidence[];
+  computedInsights?: ComputedInsight[];
+  warnings?: string[];
+}
+
 export interface AnalyzeHooks {
   /** 本地结果就绪时触发(立即发送给前端) */
   onStructured?: (p: {
@@ -100,6 +115,24 @@ export interface AnalyzeHooks {
   onNarrativeToken: (token: string) => void;
   /** LLM 阶段切换提示(SPEC 13.2 分析阶段状态) */
   onStage?: (stage: string) => void;
+  /** 最终结果（SPEC 9.2 final 事件）：完成时整体发送，前端据此刷新 summary/图表/标题 */
+  onFinal?: (p: FinalAnalysisPayload) => void;
+}
+
+/** 发送 final 事件载荷（SPEC 9.2），由 local 与 llm 分支在返回前统一调用 */
+function emitFinal(hooks: AnalyzeHooks, r: AnalysisResult): void {
+  hooks.onFinal?.({
+    summary: r.summary,
+    insights: r.insights,
+    charts: r.charts,
+    options: r.options,
+    narrative: r.narrative,
+    provider: r.provider === "local+llm" ? "local+llm" : "local",
+    createdAt: r.createdAt,
+    evidence: r.evidence,
+    computedInsights: r.computedInsights,
+    warnings: r.warnings,
+  });
 }
 
 /* ------------------------- 总入口 ------------------------- */
@@ -183,7 +216,7 @@ export async function analyzeDataset(
     for (const ch of chunkText(narrative, 20)) {
       hooks.onNarrativeToken(ch);
     }
-    return {
+    const result: AnalysisResult = {
       provider: "local",
       summary: summaryText,
       insights: insightStrings,
@@ -196,6 +229,8 @@ export async function analyzeDataset(
       warnings,
       version: "v0.2",
     };
+    emitFinal(hooks, result);
+    return result;
   }
 
   /* —— 4. LLM 解读(SPEC 12.1/12.2) —— */
@@ -264,7 +299,7 @@ export async function analyzeDataset(
 
   /* —— 6. 返回完整结果 —— */
   const usedLLM = interpretation !== null;
-  return {
+  const result: AnalysisResult = {
     provider: usedLLM ? "local+llm" : "local",
     summary: finalSummary,
     insights: finalInsights,
@@ -277,6 +312,8 @@ export async function analyzeDataset(
     warnings,
     version: "v0.2",
   };
+  emitFinal(hooks, result);
+  return result;
 }
 
 /** 把文本按 chunkSize 字符切块(用于模拟流式推送) */

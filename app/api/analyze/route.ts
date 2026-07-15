@@ -58,6 +58,8 @@ export async function POST(req: NextRequest) {
           onNarrativeToken: (token: string) => send("token", { text: token }),
           // SPEC 13.2: 分析阶段状态
           onStage: (stage: string) => send("stage", { stage }),
+          // SPEC 9.2: 最终结果事件，前端据此整体刷新 summary/图表/标题
+          onFinal: (p) => send("final", p),
         });
 
         await updateAnalysis(datasetId, result);

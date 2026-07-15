@@ -96,6 +96,18 @@ export default function DashboardPage() {
         },
         onStage: (s) => setStage(s),
         onToken: (t) => setNarrative((prev) => prev + t),
+        onFinal: (p) => {
+          // SPEC 9.4：final 到达后整体刷新，确保 LLM 的 summary/actions/图表标题立即生效
+          setSummary(p.summary);
+          setInsights(p.insights);
+          setCharts(p.charts);
+          setOptions(p.options);
+          if (p.narrative !== undefined) setNarrative(p.narrative);
+          if (p.provider) setProvider(p.provider);
+          if (p.evidence) setEvidence(p.evidence);
+          if (p.computedInsights) setComputedInsights(p.computedInsights);
+          if (p.warnings) setWarnings(p.warnings);
+        },
         onDone: (m) => {
           setProvider(m.provider);
           setStage("");

@@ -13,6 +13,7 @@ import type {
   FieldConfigIssue,
   FieldConfigUpdate,
 } from "./schemas/dataset";
+import type { FinalAnalysisPayload } from "./analyzer";
 
 const BASE = "";
 
@@ -177,6 +178,8 @@ export interface AnalyzeHooks {
   /** v0.2 阶段 H：分析阶段状态(SPEC 13.2) */
   onStage?: (stage: string) => void;
   onToken?: (text: string) => void;
+  /** SPEC 9.4: final 事件，LLM/local 完成后整体刷新 summary/图表/标题/行动建议 */
+  onFinal?: (p: FinalAnalysisPayload) => void;
   onDone?: (meta: {
     provider: "local" | "local+llm" | "mock" | "llm";
     createdAt: string;
@@ -226,6 +229,9 @@ export async function runAnalysis(
           break;
         case "token":
           hooks.onToken?.(payload.text ?? "");
+          break;
+        case "final":
+          hooks.onFinal?.(payload);
           break;
         case "done":
           hooks.onDone?.(payload);
