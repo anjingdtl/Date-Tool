@@ -12,9 +12,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const PREVIEW_ROWS = 10;
+const PREVIEW_MODE_ROWS = 20;
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } },
 ) {
   const requestId = newRequestId();
@@ -24,6 +25,31 @@ export async function GET(
     }
     const ds = await getDataset(params.id);
     if (!ds) throw new NotFoundError("数据集不存在");
+
+    // v0.2 阶段 D：?mode=preview 用于预检页，返回前 20 行 + columns + config + quality
+    const mode = req.nextUrl.searchParams.get("mode");
+    if (mode === "preview") {
+      return ok({
+        id: ds.id,
+        name: ds.name,
+        fileName: ds.fileName,
+        source: ds.source,
+        rowCount: ds.rowCount,
+        originalRowCount: ds.originalRowCount,
+        storedRowCount: ds.storedRowCount,
+        sheetName: ds.sheetName,
+        columns: ds.columns,
+        createdAt: ds.createdAt,
+        status: ds.status,
+        quality: ds.quality,
+        config: ds.config,
+        previewRows: ds.rows.slice(0, PREVIEW_MODE_ROWS),
+        analysis: ds.analysis,
+        analyses: ds.analyses ?? (ds.analysis ? [ds.analysis] : []),
+        hasAnalysis: !!ds.analysis,
+      });
+    }
+
     const pub = await getPublicDataset(params.id);
     return ok({
       ...pub,

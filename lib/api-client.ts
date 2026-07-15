@@ -7,6 +7,10 @@ import type {
   PublicDataset,
   UploadResult,
 } from "./types";
+import type {
+  FieldConfigIssue,
+  FieldConfigUpdate,
+} from "./schemas/dataset";
 
 const BASE = "";
 
@@ -52,6 +56,105 @@ export async function getDataset(id: string): Promise<DatasetDetail> {
 export async function deleteDataset(id: string): Promise<void> {
   const res = await fetch(`${BASE}/api/datasets/${id}`, { method: "DELETE" });
   await parse<{ deleted: boolean }>(res);
+}
+
+/* ----------------------- v0.2 阶段 D：预检 API ----------------------- */
+
+/** 预检详情（GET /api/datasets/{id}?mode=preview，前 20 行 + columns + config + quality） */
+export interface PreviewDetail {
+  id: string;
+  name: string;
+  fileName: string;
+  source: "csv" | "excel";
+  rowCount: number;
+  originalRowCount?: number;
+  storedRowCount?: number;
+  sheetName?: string;
+  columns: DatasetDetail["columns"];
+  createdAt: string;
+  status?: DatasetDetail["status"];
+  quality?: DatasetDetail["quality"];
+  config?: DatasetDetail["config"];
+  previewRows: DatasetRow[];
+  analysis: AnalysisResult | null;
+  hasAnalysis: boolean;
+}
+
+export async function getPreviewDetail(id: string): Promise<PreviewDetail> {
+  const res = await fetch(`${BASE}/api/datasets/${id}?mode=preview`, {
+    method: "GET",
+  });
+  return parse<PreviewDetail>(res);
+}
+
+/** 字段配置更新响应 */
+export interface FieldConfigUpdateResponse {
+  columns: DatasetDetail["columns"];
+  config?: DatasetDetail["config"];
+  issues: FieldConfigIssue[];
+}
+
+/**
+ * 更新字段配置。返回服务端校验后的 issues。
+ * 阻断错误时服务端返回 422，本函数抛错，err.details 是 issues 数组。
+ */
+export async function updateFieldConfig(
+  id: string,
+  body: FieldConfigUpdate,
+): Promise<FieldConfigUpdateResponse> {
+  const res = await fetch(`${BASE}/api/datasets/${id}/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = `请求失败 (${res.status})`;
+    let details: unknown;
+    try {
+      const j = await res.json();
+      if (j?.detail) detail = j.detail;
+      if (j?.details) details = j.details;
+    } catch {
+      /* ignore */
+    }
+    const e = new Error(detail) as Error & { details?: unknown };
+    if (details !== undefined) e.details = details;
+    throw e;
+  }
+  return parse<FieldConfigUpdateResponse>(res);
+}
+
+/** confirm 数据集：draft → ready，返回跳转地址 */
+export interface ConfirmResult {
+  id: string;
+  status: string;
+  redirectTo: string;
+}
+
+export async function confirmDataset(
+  id: string,
+  body?: FieldConfigUpdate,
+): Promise<ConfirmResult> {
+  const res = await fetch(`${BASE}/api/datasets/${id}/confirm`, {
+    method: "POST",
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    let detail = `请求失败 (${res.status})`;
+    let details: unknown;
+    try {
+      const j = await res.json();
+      if (j?.detail) detail = j.detail;
+      if (j?.details) details = j.details;
+    } catch {
+      /* ignore */
+    }
+    const e = new Error(detail) as Error & { details?: unknown };
+    if (details !== undefined) e.details = details;
+    throw e;
+  }
+  return parse<ConfirmResult>(res);
 }
 
 export interface AnalyzeHooks {

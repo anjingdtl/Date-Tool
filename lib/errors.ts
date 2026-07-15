@@ -39,6 +39,12 @@ export class UnprocessableEntityError extends AppError {
   }
 }
 
+export class ConflictError extends AppError {
+  constructor(message = "状态冲突", details?: unknown) {
+    super(message, "CONFLICT", 409, details);
+  }
+}
+
 export class InternalError extends AppError {
   constructor(message = "服务器内部错误", details?: unknown) {
     super(message, "INTERNAL_ERROR", 500, details, false);

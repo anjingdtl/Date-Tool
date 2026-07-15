@@ -54,7 +54,8 @@ export async function POST(req: NextRequest) {
       columns: parsed.columns,
       rows: parsed.rows,
       quality: parsed.quality,
-      status: "ready",
+      // v0.2 阶段 D：上传后先进入 draft 状态，必须经过预检 confirm 才能进入 ready
+      status: "draft",
       analysis: null,
       createdAt: new Date().toISOString(),
     };

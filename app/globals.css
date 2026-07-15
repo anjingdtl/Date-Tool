@@ -1332,3 +1332,306 @@ table.data tr:hover td {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   v0.2 阶段 D · 预检页（字段配置表 + 质量概览 + 数据预览）
+   ============================================================ */
+
+.fc-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px;
+}
+.fc-summary-item {
+  padding: 14px 16px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-rim);
+  border-radius: var(--radius);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.fc-summary-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 0 0 4px;
+}
+.fc-summary-value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+.fc-summary-value.trunc {
+  color: var(--warn);
+}
+
+.fc-quality-grid {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.fc-metric {
+  padding: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--glass-rim);
+  background: var(--glass-1);
+  text-align: center;
+}
+.fc-metric-ok {
+  border-color: color-mix(in srgb, var(--accent-2) 36%, transparent);
+  background: color-mix(in srgb, var(--accent-2) 8%, transparent);
+}
+.fc-metric-warn {
+  border-color: color-mix(in srgb, var(--warn) 42%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+.fc-metric-danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.fc-metric-value {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+}
+.fc-metric-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  letter-spacing: 0.02em;
+}
+.fc-metric-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 4px;
+}
+
+.fc-warning-list {
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px dashed color-mix(in srgb, var(--text) 12%, transparent);
+}
+.fc-warning-title {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 0 0 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.fc-warning-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.fc-w-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.fc-w-code {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text-dim);
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+}
+.fc-w-warning .fc-w-code {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 38%, transparent);
+}
+.fc-w-error .fc-w-code {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 38%, transparent);
+}
+.fc-w-msg {
+  color: var(--text);
+}
+.fc-w-more {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  padding-left: 4px;
+}
+
+/* —— 字段配置表 —— */
+.fc-table {
+  font-size: 12.5px;
+}
+.fc-table th,
+.fc-table td {
+  white-space: normal;
+  vertical-align: top;
+  padding: 12px 12px;
+}
+.fc-table th {
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.fc-row-error {
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+}
+.fc-row-error:hover td {
+  background: color-mix(in srgb, var(--danger) 10%, transparent) !important;
+}
+.fc-name {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 13.5px;
+  word-break: break-all;
+}
+.fc-orig {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 3px;
+  font-family: var(--font-mono);
+}
+.fc-issues {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: grid;
+  gap: 4px;
+}
+.fc-issues li {
+  font-size: 11.5px;
+  line-height: 1.45;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.fc-err {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: #e8a89c;
+  border-left: 2px solid var(--danger);
+}
+.fc-warn {
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: #e2c49c;
+  border-left: 2px solid var(--warn);
+}
+.fc-sample {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.fc-select {
+  width: 100%;
+  min-width: 90px;
+  padding: 7px 10px !important;
+  font-size: 12.5px !important;
+}
+.fc-conf {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+}
+.fc-nullrate {
+  font-size: 10.5px;
+  color: var(--warn);
+  margin-top: 4px;
+}
+.fc-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.fc-check input {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+/* —— 预检页快捷操作栏 —— */
+.fc-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.fc-toolbar .btn {
+  padding: 8px 14px;
+  font-size: 13px;
+}
+.fc-status-pill {
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+}
+.fc-status-pill.draft {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 36%, transparent);
+}
+.fc-status-pill.ready {
+  background: color-mix(in srgb, var(--accent-2) 14%, transparent);
+  color: var(--accent-2);
+  border: 1px solid color-mix(in srgb, var(--accent-2) 36%, transparent);
+}
+
+/* —— 前 20 行预览 —— */
+.fc-preview-wrap {
+  max-height: 480px;
+}
+.fc-preview-wrap table.data th,
+.fc-preview-wrap table.data td {
+  font-size: 12px;
+  padding: 8px 11px;
+}
+
+@media (max-width: 720px) {
+  .fc-table {
+    display: block;
+  }
+  .fc-table thead,
+  .fc-table tbody,
+  .fc-table tr,
+  .fc-table th,
+  .fc-table td {
+    display: block;
+  }
+  .fc-table thead {
+    display: none;
+  }
+  .fc-table tr {
+    border: 1px solid var(--glass-rim);
+    border-radius: var(--radius);
+    margin-bottom: 10px;
+    padding: 8px;
+    background: var(--glass-1);
+  }
+  .fc-table td {
+    border-bottom: none;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 4px;
+  }
+  .fc-table td::before {
+    content: attr(data-label);
+    font-size: 10.5px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    flex: 0 0 70px;
+  }
+}

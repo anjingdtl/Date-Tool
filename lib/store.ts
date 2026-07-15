@@ -7,6 +7,7 @@ import {
 } from "./schemas/dataset";
 import type {
   AnalysisResult,
+  ColumnMeta,
   DatasetAnalysisConfig,
   DataQualityReport,
   DatasetRow,
@@ -333,4 +334,71 @@ export async function updateAnalysis(
     ds.status = "completed";
   }
   await saveDataset(ds);
+}
+
+/**
+ * 更新数据集字段配置与分析配置（预检阶段，SPEC 9.7 / 17.3）。
+ *
+ * - 只覆盖 columns 中存在的字段的 role/format/defaultAggregation/includeInAnalysis/type/userModified；
+ * - 保留其它元数据（name/originalName/sampleValues/nullCount/...）；
+ * - 同步更新 analysisConfig；
+ * - 不修改 rows（用户改类型后，规范化在阶段 E 重新跑）。
+ *
+ * 调用方应先通过 validateFieldConfig 校验。
+ */
+export async function updateDatasetConfig(
+  id: string,
+  columns: Array<{
+    name: string;
+    type: ColumnMeta["type"];
+    role: ColumnMeta["role"];
+    format: ColumnMeta["format"];
+    defaultAggregation: ColumnMeta["defaultAggregation"];
+    includeInAnalysis: boolean;
+  }>,
+  analysisConfig?: DatasetAnalysisConfig,
+): Promise<StoredDataset | null> {
+  const ds = await getDataset(id);
+  if (!ds) return null;
+
+  const byName = new Map(columns.map((c) => [c.name, c]));
+  ds.columns = ds.columns.map((c) => {
+    const upd = byName.get(c.name);
+    if (!upd) return c;
+    const changed =
+      upd.type !== c.type ||
+      upd.role !== c.role ||
+      upd.format !== c.format ||
+      upd.defaultAggregation !== c.defaultAggregation ||
+      upd.includeInAnalysis !== (c.includeInAnalysis ?? true);
+    return {
+      ...c,
+      type: upd.type,
+      role: upd.role,
+      format: upd.format,
+      defaultAggregation: upd.defaultAggregation,
+      includeInAnalysis: upd.includeInAnalysis,
+      userModified: changed ? true : c.userModified,
+    };
+  });
+
+  if (analysisConfig) ds.config = analysisConfig;
+  await saveDataset(ds);
+  return ds;
+}
+
+/**
+ * 设置数据集状态（预检 confirm / 分析阶段切换）。
+ * 状态机：draft → ready → analyzing → completed/error。
+ * confirm 仅允许从 draft → ready。
+ */
+export async function setDatasetStatus(
+  id: string,
+  next: DatasetStatus,
+): Promise<StoredDataset | null> {
+  const ds = await getDataset(id);
+  if (!ds) return null;
+  ds.status = next;
+  await saveDataset(ds);
+  return ds;
 }

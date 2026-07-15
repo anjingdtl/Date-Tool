@@ -9,6 +9,8 @@ import {
   isValidDatasetId,
   saveJsonAtomic,
   DatasetIdSchema,
+  updateDatasetConfig,
+  setDatasetStatus,
 } from "@/lib/store";
 import type { StoredDataset } from "@/lib/types";
 import { promises as fs } from "node:fs";
@@ -305,5 +307,144 @@ describe("deleteDataset", () => {
 
   it("删除非 UUID 返回 false（不访问文件系统）", async () => {
     expect(await deleteDataset("../../etc/passwd")).toBe(false);
+  });
+});
+
+describe("updateDatasetConfig（阶段 D）", () => {
+  beforeEach(async () => {
+    const dir = path.join(config.dataDir, "datasets");
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(dir, { recursive: true });
+  });
+
+  it("更新字段的 role/format/agg/includeInAnalysis 并标记 userModified", async () => {
+    const ds = makeDataset(VALID_UUID);
+    ds.columns = [
+      {
+        name: "金额",
+        type: "number",
+        sampleValues: [100],
+        role: "metric",
+        format: "decimal",
+        defaultAggregation: "sum",
+        includeInAnalysis: true,
+        userModified: false,
+      },
+    ];
+    ds.status = "draft";
+    await saveDataset(ds);
+
+    const updated = await updateDatasetConfig(
+      VALID_UUID,
+      [
+        {
+          name: "金额",
+          type: "number",
+          role: "dimension",
+          format: "currency",
+          defaultAggregation: "avg",
+          includeInAnalysis: false,
+        },
+      ],
+      undefined,
+    );
+    expect(updated).not.toBeNull();
+    expect(updated!.columns[0].role).toBe("dimension");
+    expect(updated!.columns[0].format).toBe("currency");
+    expect(updated!.columns[0].defaultAggregation).toBe("avg");
+    expect(updated!.columns[0].includeInAnalysis).toBe(false);
+    expect(updated!.columns[0].userModified).toBe(true);
+    // 保留 sampleValues
+    expect(updated!.columns[0].sampleValues).toEqual([100]);
+  });
+
+  it("未变化的字段不标记 userModified", async () => {
+    const ds = makeDataset(VALID_UUID);
+    ds.columns = [
+      {
+        name: "金额",
+        type: "number",
+        sampleValues: [100],
+        role: "metric",
+        format: "decimal",
+        defaultAggregation: "sum",
+        includeInAnalysis: true,
+        userModified: false,
+      },
+    ];
+    ds.status = "draft";
+    await saveDataset(ds);
+
+    // 提交与原值一致的配置
+    const updated = await updateDatasetConfig(
+      VALID_UUID,
+      [
+        {
+          name: "金额",
+          type: "number",
+          role: "metric",
+          format: "decimal",
+          defaultAggregation: "sum",
+          includeInAnalysis: true,
+        },
+      ],
+      undefined,
+    );
+    expect(updated!.columns[0].userModified).toBe(false);
+  });
+
+  it("不存在的数据集返回 null", async () => {
+    const r = await updateDatasetConfig(
+      "33333333-3333-4333-8333-333333333333",
+      [],
+      undefined,
+    );
+    expect(r).toBeNull();
+  });
+
+  it("同步保存 analysisConfig 到 meta", async () => {
+    const ds = makeDataset(VALID_UUID);
+    ds.status = "draft";
+    await saveDataset(ds);
+    const cfg = {
+      timeField: "a",
+      statusFields: [],
+      metricFields: ["a"],
+      ignoredFields: [],
+      maxCharts: 8,
+    };
+    await updateDatasetConfig(VALID_UUID, [], cfg);
+    const got = await getDataset(VALID_UUID);
+    expect(got!.config).toBeDefined();
+    expect(got!.config!.maxCharts).toBe(8);
+    expect(got!.config!.timeField).toBe("a");
+  });
+});
+
+describe("setDatasetStatus（阶段 D）", () => {
+  beforeEach(async () => {
+    const dir = path.join(config.dataDir, "datasets");
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(dir, { recursive: true });
+  });
+
+  it("draft → ready", async () => {
+    const ds = makeDataset(VALID_UUID);
+    ds.status = "draft";
+    await saveDataset(ds);
+    const r = await setDatasetStatus(VALID_UUID, "ready");
+    expect(r).not.toBeNull();
+    expect(r!.status).toBe("ready");
+    // 落盘可见
+    const got = await getDataset(VALID_UUID);
+    expect(got!.status).toBe("ready");
+  });
+
+  it("不存在的数据集返回 null", async () => {
+    const r = await setDatasetStatus(
+      "44444444-4444-4444-8444-444444444444",
+      "ready",
+    );
+    expect(r).toBeNull();
   });
 });

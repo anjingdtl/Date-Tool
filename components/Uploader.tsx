@@ -16,7 +16,8 @@ export default function Uploader() {
     setErr("");
     try {
       const r = await uploadDataset(file);
-      router.push(`/dashboard/${r.id}`);
+      // v0.2 阶段 D：上传后进入预检页，而不是直接看板
+      router.push(`/import/${r.id}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "上传失败，请重试");
       setBusy(false);
