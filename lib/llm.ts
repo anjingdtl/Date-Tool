@@ -40,41 +40,55 @@ function authHeaders(apiKey: string): Record<string, string> {
   };
 }
 
-/** 非流式调用，要求模型返回 JSON。用于拿结构化分析结果。 */
+/** 非流式调用，要求模型返回 JSON。用于拿结构化分析结果。结构化解释 30 秒超时。 */
 export async function chatJSON(
   system: string,
   user: string,
   requestId: string,
 ): Promise<unknown> {
   const llm = await activeLLM();
-  const res = await fetch(endpoint(llm.baseUrl, "/chat/completions"), {
-    method: "POST",
-    headers: authHeaders(llm.apiKey),
-    body: JSON.stringify({
-      model: llm.model,
-      temperature: 0.3,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ] as ChatMessage[],
-    }),
-  });
+  const ctrl = new AbortController();
+  // 结构化解释：30 秒超时，超时后回退本地结果
+  const timer = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const res = await fetch(endpoint(llm.baseUrl, "/chat/completions"), {
+      method: "POST",
+      headers: authHeaders(llm.apiKey),
+      body: JSON.stringify({
+        model: llm.model,
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ] as ChatMessage[],
+      }),
+      signal: ctrl.signal,
+    });
 
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    logger.warn("LLM JSON 调用失败", { requestId, status: res.status, txt });
-    throw new Error(`LLM 调用失败(${res.status}): ${txt.slice(0, 200)}`);
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      logger.warn("LLM JSON 调用失败", { requestId, status: res.status, txt });
+      throw new Error(`LLM 调用失败(${res.status}): ${txt.slice(0, 200)}`);
+    }
+
+    const json = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    const content = json.choices?.[0]?.message?.content ?? "{}";
+    return stripJson(content);
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      logger.warn("LLM JSON 调用超时", { requestId });
+      throw new Error("LLM 结构化解读超时");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-
-  const json = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const content = json.choices?.[0]?.message?.content ?? "{}";
-  return stripJson(content);
 }
 
-/** 流式调用，逐 token 回调；返回完整文本。用于「占卜师」实时解读。 */
+/** 流式调用，逐 token 回调；返回完整文本。流式解读 60 秒超时，超时返回已生成部分。 */
 export async function streamChat(
   system: string,
   user: string,
@@ -82,58 +96,73 @@ export async function streamChat(
   requestId: string,
 ): Promise<string> {
   const llm = await activeLLM();
-  const res = await fetch(endpoint(llm.baseUrl, "/chat/completions"), {
-    method: "POST",
-    headers: authHeaders(llm.apiKey),
-    body: JSON.stringify({
-      model: llm.model,
-      temperature: 0.6,
-      stream: true,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ] as ChatMessage[],
-    }),
-  });
-
-  if (!res.ok || !res.body) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`LLM 流式调用失败(${res.status}): ${txt.slice(0, 200)}`);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
+  const ctrl = new AbortController();
+  // 流式解读：60 秒超时，超时后保留已生成文本并回退本地结果
+  const timer = setTimeout(() => ctrl.abort(), 60_000);
   let full = "";
-  // 推理模型（MiniMax M3 等）会把思考过程裹在 <think> 中随流输出，需逐 token 过滤
-  const think: ThinkState = { thinking: false, tail: "" };
+  try {
+    const res = await fetch(endpoint(llm.baseUrl, "/chat/completions"), {
+      method: "POST",
+      headers: authHeaders(llm.apiKey),
+      body: JSON.stringify({
+        model: llm.model,
+        temperature: 0.6,
+        stream: true,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ] as ChatMessage[],
+      }),
+      signal: ctrl.signal,
+    });
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const data = trimmed.slice(5).trim();
-      if (data === "[DONE]") continue;
-      try {
-        const chunk = JSON.parse(data);
-        const token: string | undefined = chunk.choices?.[0]?.delta?.content;
-        if (token) {
-          const cleaned = filterThink(token, think);
-          full += cleaned;
-          if (cleaned) onToken(cleaned);
+    if (!res.ok || !res.body) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(`LLM 流式调用失败(${res.status}): ${txt.slice(0, 200)}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    // 推理模型（MiniMax M3 等）会把思考过程裹在 <think> 中随流输出，需逐 token 过滤
+    const think: ThinkState = { thinking: false, tail: "" };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const data = trimmed.slice(5).trim();
+        if (data === "[DONE]") continue;
+        try {
+          const chunk = JSON.parse(data);
+          const token: string | undefined = chunk.choices?.[0]?.delta?.content;
+          if (token) {
+            const cleaned = filterThink(token, think);
+            full += cleaned;
+            if (cleaned) onToken(cleaned);
+          }
+        } catch {
+          // 忽略不完整的 SSE 片段
         }
-      } catch {
-        // 忽略不完整的 SSE 片段
       }
     }
+    logger.debug("LLM 流式完成", { requestId, chars: full.length });
+    return full;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      logger.warn("LLM 流式解读超时", { requestId, chars: full.length });
+      // 超时：返回已收到的部分文本，调用方可继续用本地兜底
+      return full;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  logger.debug("LLM 流式完成", { requestId, chars: full.length });
-  return full;
 }
 
 interface ThinkState {
@@ -142,26 +171,7 @@ interface ThinkState {
   tail: string;
 }
 
-/** 过滤推理模型的 <think>...</think> 思考过程（可能跨 chunk 截断）。返回要展示给用户的正式文本。 */
-function filterThink(token: string, state: ThinkState): string {
-  // 1) 拼回上次未闭合的标签头
-  let s = state.tail + token;
-  state.tail = "";
-  // 2) 末尾若是不完整的 < 标签片段，暂存等下个 chunk
-  const lastLt = s.lastIndexOf("<");
-  if (lastLt !== -1) {
-    const suffix = s.slice(lastLt);
-    if (/<(think|\/think)?$/.test(suffix)) {
-      state.tail = suffix;
-      s = s.slice(0, lastLt);
-    }
-  }
-  // 3) 逐段剥离思考内容
-  let out = "";
-  let i = 0;
-  while (i < s.length) {
-    if (state.thinking) {
-      const end = s.indexOf("</think>", i);
+/** 过滤推理", i);
       if (end === -1) {
         i = s.length;
         break;

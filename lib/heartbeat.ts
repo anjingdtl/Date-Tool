@@ -7,6 +7,11 @@
  *   - 仅当 activeSessions 清空时真正退出（多标签安全）
  *   - 浏览器被强杀来不及通知 → watcher 发现全部 session 超时后自动退出
  *
+ * 开关：AUTO_SHUTDOWN_ENABLED
+ *   - "true"  → 启用自动关闭（Windows 一键启动默认）
+ *   - "false" → 关闭自动关闭（普通 npm run dev 默认，避免开发调试意外退出）
+ *   - 未设置  → 默认关闭
+ *
  * 全局单例：HMR 不会重复启动 watcher。
  */
 
@@ -25,6 +30,18 @@ declare global {
   var __emptySince: number | undefined;
   // eslint-disable-next-line no-var
   var __shuttingDown: boolean | undefined;
+}
+
+/**
+ * 是否启用「关闭 WebUI 自动关闭服务」。
+ * 显式设置优先；未设置时默认关闭（npm run dev 不会意外退出）。
+ * Windows 一键启动脚本会显式设置 AUTO_SHUTDOWN_ENABLED=true。
+ */
+export function autoShutdownEnabled(): boolean {
+  const v = process.env.AUTO_SHUTDOWN_ENABLED;
+  if (v === "true") return true;
+  if (v === "false") return false;
+  return false;
 }
 
 function sessions(): Map<string, number> {
@@ -54,6 +71,11 @@ export function release(sessionId: string): { removed: boolean; remaining: numbe
   return { removed, remaining };
 }
 
+/** sid 是否已注册（用于 shutdown 校验：只接受已注册 session） */
+export function isRegistered(sessionId: string): boolean {
+  return sessions().has(sessionId);
+}
+
 function pruneExpired(): number {
   const now = Date.now();
   const map = sessions();
@@ -80,9 +102,10 @@ export function getIdleMs(): number {
 
 /**
  * 确保 watcher 已启动（幂等）。每个进程最多一个 watcher。
- * 在 API 路由首次被访问时触发。
+ * 仅在 AUTO_SHUTDOWN_ENABLED=true 时启动。
  */
 export function ensureWatcher(): void {
+  if (!autoShutdownEnabled()) return;
   if (globalThis.__heartbeatWatcher) return;
   if (!globalThis.__lastSeenAt) globalThis.__lastSeenAt = Date.now();
 
@@ -117,8 +140,10 @@ export function ensureWatcher(): void {
 
 /**
  * 主动触发关闭。延迟一点让响应刷回浏览器。
+ * 若自动关闭被关闭，则不退出进程。
  */
 export function gracefulShutdown(reason: string): void {
+  if (!autoShutdownEnabled()) return;
   if (globalThis.__shuttingDown) return;
   globalThis.__shuttingDown = true;
   // eslint-disable-next-line no-console

@@ -1,14 +1,16 @@
 {
   "name": "wecom-ops-dashboard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "企微集约化托管运营可视化数据仪表 —— 导入数据，LLM 自动分析，生成可视化看板",
+  "description": "Date-Tool —— 个人本地数据分析与辅助图表工具（导入预检、确定性分析、LLM 解读）",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "start": "next start -H 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
     "echarts": "5.5.1",
@@ -25,6 +27,7 @@
     "@types/papaparse": "5.3.14",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
-    "typescript": "5.5.3"
+    "typescript": "5.5.3",
+    "vitest": "^1.6.0"
   }
 }
