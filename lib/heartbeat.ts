@@ -2,17 +2,17 @@
  * 服务端心跳 + 闲置自动关闭
  *
  * 设计：
- *   - 每个浏览器标签页（client component mount）生成一个 sessionId
- *   - 定时发心跳 POST /api/heartbeat 带 sessionId → 服务端记入 activeSessions
- *   - 浏览器关闭时 sendBeacon('/api/shutdown') 带 sessionId → 服务端从 activeSessions 移除
- *   - 只有 activeSessions 清空时，才真正退出（这样多标签不会被一个关掉）
- *   - 万一浏览器被强杀没机会发通知 → watcher 检查所有 session 都超过 IDLE_TIMEOUT_MS → 自动退出（兜底）
+ *   - 每个浏览器标签页生成 sessionId，定时 POST /api/heartbeat
+ *   - 浏览器关闭时 sendBeacon('/api/shutdown?sid=...') → 从 activeSessions 移除
+ *   - 仅当 activeSessions 清空时真正退出（多标签安全）
+ *   - 浏览器被强杀来不及通知 → watcher 发现全部 session 超时后自动退出
  *
  * 全局单例：HMR 不会重复启动 watcher。
  */
 
-const HEARTBEAT_INTERVAL_MS = 30_000; // watcher 检查频率
-const IDLE_TIMEOUT_MS = 5 * 60_000; // 5 分钟无活动自动关
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const IDLE_TIMEOUT_MS = 5 * 60_000; // 单 session 5 分钟无心跳视为失效
+const EMPTY_GRACE_MS = 45_000; // 全部 session 清空后再等 45s，避免误杀
 
 declare global {
   // eslint-disable-next-line no-var
@@ -21,6 +21,10 @@ declare global {
   var __heartbeatWatcher: NodeJS.Timeout | undefined;
   // eslint-disable-next-line no-var
   var __lastSeenAt: number | undefined;
+  // eslint-disable-next-line no-var
+  var __emptySince: number | undefined;
+  // eslint-disable-next-line no-var
+  var __shuttingDown: boolean | undefined;
 }
 
 function sessions(): Map<string, number> {
@@ -32,25 +36,37 @@ export function touch(sessionId: string): void {
   const now = Date.now();
   sessions().set(sessionId, now);
   globalThis.__lastSeenAt = now;
+  globalThis.__emptySince = undefined;
 }
 
-export function release(sessionId: string): number {
-  sessions().delete(sessionId);
-  return sessions().size;
+/**
+ * 移除 session。
+ * - removed=false：sid 本就不在集合里（重复 beacon / 未知 sid），不应据此关机
+ * - remaining：当前仍活跃数量
+ */
+export function release(sessionId: string): { removed: boolean; remaining: number } {
+  const map = sessions();
+  const removed = map.delete(sessionId);
+  const remaining = pruneExpired();
+  if (remaining === 0 && removed) {
+    globalThis.__emptySince = globalThis.__emptySince ?? Date.now();
+  }
+  return { removed, remaining };
+}
+
+function pruneExpired(): number {
+  const now = Date.now();
+  const map = sessions();
+  for (const [id, t] of map.entries()) {
+    if (now - t > IDLE_TIMEOUT_MS) {
+      map.delete(id);
+    }
+  }
+  return map.size;
 }
 
 export function activeCount(): number {
-  // 清理已超时的 session（不算活跃）
-  const now = Date.now();
-  let changed = false;
-  for (const [id, t] of sessions().entries()) {
-    if (now - t > IDLE_TIMEOUT_MS) {
-      sessions().delete(id);
-      changed = true;
-    }
-  }
-  if (changed) globalThis.__lastSeenAt = now; // 触发下次 watcher
-  return sessions().size;
+  return pruneExpired();
 }
 
 export function getLastSeen(): number {
@@ -71,18 +87,26 @@ export function ensureWatcher(): void {
   if (!globalThis.__lastSeenAt) globalThis.__lastSeenAt = Date.now();
 
   globalThis.__heartbeatWatcher = setInterval(() => {
-    // 顺便清理过期 session（让 activeCount 准确）
-    const alive = activeCount();
-    if (alive === 0 && getLastSeen() > 0) {
-      // 全部 session 都关了且超过一次心跳周期没新访问 → 退出
-      const idle = getIdleMs();
-      if (idle > HEARTBEAT_INTERVAL_MS) {
-        // eslint-disable-next-line no-console
-        console.log(
-          `[heartbeat] all sessions closed, idle ${Math.round(idle / 1000)}s, shutting down`,
-        );
-        setTimeout(() => process.exit(0), 200);
-      }
+    if (globalThis.__shuttingDown) return;
+
+    const alive = pruneExpired();
+    if (alive > 0) {
+      globalThis.__emptySince = undefined;
+      return;
+    }
+
+    // 从未有过任何 session（例如刚启动还没打开页面）→ 不关
+    if (!globalThis.__lastSeenAt) return;
+
+    const emptySince = globalThis.__emptySince ?? Date.now();
+    if (!globalThis.__emptySince) globalThis.__emptySince = emptySince;
+
+    if (Date.now() - emptySince > EMPTY_GRACE_MS) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[heartbeat] no active sessions for ${Math.round((Date.now() - emptySince) / 1000)}s, shutting down`,
+      );
+      gracefulShutdown("idle-empty-sessions");
     }
   }, HEARTBEAT_INTERVAL_MS);
 
@@ -92,10 +116,11 @@ export function ensureWatcher(): void {
 }
 
 /**
- * 主动触发关闭。给前端 sendBeacon 用。
- * 延迟 300ms 让 sendBeacon 完成 + 响应刷回浏览器。
+ * 主动触发关闭。延迟一点让响应刷回浏览器。
  */
 export function gracefulShutdown(reason: string): void {
+  if (globalThis.__shuttingDown) return;
+  globalThis.__shuttingDown = true;
   // eslint-disable-next-line no-console
   console.log(`[heartbeat] shutting down: ${reason}`);
   setTimeout(() => process.exit(0), 300);

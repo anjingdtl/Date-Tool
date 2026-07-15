@@ -1,3 +1,5 @@
+import path from "node:path";
+
 function required(name: string, fallback?: string): string {
   const v = process.env[name];
   if (v && v.length > 0) return v;
@@ -12,10 +14,16 @@ const llmApiKey = process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || "";
 const llmModel =
   process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-4o-mini";
 
+/** 统一为绝对路径，避免 cwd 变化时 .data 与 settings 读写分叉 */
+function resolveDataDir(): string {
+  const raw = process.env.DATA_DIR || ".data";
+  return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
+}
+
 export const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: parseInt(process.env.PORT || "3000", 10),
-  dataDir: process.env.DATA_DIR || ".data",
+  dataDir: resolveDataDir(),
   llm: {
     baseUrl: llmBaseUrl,
     apiKey: llmApiKey,

@@ -6,21 +6,24 @@ import { useEffect, useRef } from "react";
  * AutoShutdown —— 每个标签页独占一个 session
  *
  * 生命周期：
- *   1. 组件 mount → 用 crypto.randomUUID() 生成 sessionId（保留在 useRef，不变）
- *   2. 首次心跳 + 每 25 秒定时心跳（带 X-Session-Id）
- *   3. 页面卸载（beforeunload / pagehide / visibilitychange→hidden）
- *      → 用 navigator.sendBeacon 发 POST /api/shutdown（也带 X-Session-Id）
- *      → 服务端从活跃集移除该 session
+ *   1. 组件 mount → 生成 sessionId（useRef 固定）
+ *   2. 首次心跳 + 每 25 秒定时心跳（Header: X-Session-Id）
+ *   3. 页面真正卸载（pagehide / beforeunload）时 sendBeacon 通知服务端
  *
- * 多标签场景：每个标签独立的 sessionId，服务端只在所有 session 都关闭时退出
+ * 注意：不要在 visibilitychange→hidden 时 shutdown。
+ * 切标签 / 最小化 / 失焦都会触发 hidden，会导致服务被误杀。
+ * 多标签：每个标签独立 sessionId，全部关闭后服务端才退出。
  */
 export default function AutoShutdown() {
   const sessionIdRef = useRef<string>("");
+  const shutOnceRef = useRef(false);
 
   useEffect(() => {
-    // 一次生成永不变化（即使 React 重新渲染）
     if (!sessionIdRef.current) {
-      sessionIdRef.current = crypto.randomUUID();
+      sessionIdRef.current =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `s-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     }
     const sid = sessionIdRef.current;
 
@@ -39,14 +42,14 @@ export default function AutoShutdown() {
     const intervalId = window.setInterval(ping, 25_000);
 
     const notifyShutdown = () => {
+      if (shutOnceRef.current) return;
+      shutOnceRef.current = true;
       try {
-        // 用 query 拼装 sessionId（最兼容 sendBeacon）
+        // sendBeacon 不能自定义 header，sessionId 放 query
         const url = `/api/shutdown?sid=${encodeURIComponent(sid)}`;
-        // sendBeacon 不能加 header，所以放 query；body 用空 Blob
         const blob = new Blob([], { type: "application/json" });
         const ok = navigator.sendBeacon(url, blob);
         if (!ok) {
-          // 兜底：fetch keepalive + header
           fetch("/api/shutdown", {
             method: "POST",
             headers: {
@@ -62,21 +65,17 @@ export default function AutoShutdown() {
       }
     };
 
-    const onBeforeUnload = () => notifyShutdown();
-    const onPageHide = () => notifyShutdown();
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") notifyShutdown();
-    };
-
-    window.addEventListener("beforeunload", onBeforeUnload);
-    window.addEventListener("pagehide", onPageHide);
-    document.addEventListener("visibilitychange", onVisibility);
+    // pagehide：关闭标签 / 刷新 / 跳外站；比 beforeunload 更可靠（含移动端）
+    // beforeunload：桌面浏览器关闭前兜底
+    // 切勿监听 visibilitychange——切标签会误关服务
+    window.addEventListener("pagehide", notifyShutdown);
+    window.addEventListener("beforeunload", notifyShutdown);
 
     return () => {
       window.clearInterval(intervalId);
-      window.removeEventListener("beforeunload", onBeforeUnload);
-      window.removeEventListener("pagehide", onPageHide);
-      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", notifyShutdown);
+      window.removeEventListener("beforeunload", notifyShutdown);
+      // React Strict Mode 会模拟卸载：不要在 cleanup 里 shutdown
     };
   }, []);
 

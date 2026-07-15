@@ -1,49 +1,76 @@
 @echo off
+REM ============================================================
+REM Date-Tool dev server launcher
+REM - Double-click to run (console window)
+REM - Or called silently by start-dev.vbs (hidden window)
+REM IMPORTANT: Do NOT outer-redirect this bat to the same log file.
+REM The bat writes logs\dev-server.log itself; double redirect locks
+REM the file on Windows and the server never starts.
+REM ============================================================
+
 setlocal EnableDelayedExpansion
 
 cd /d "%~dp0"
 
 if not exist "logs" mkdir "logs"
-set LOG_FILE=%~dp0logs\dev-server.log
+set "LOG_FILE=%~dp0logs\dev-server.log"
 
-echo ============================================================ >  "%LOG_FILE%"
-echo    Date-Tool Dev Server - %date% %time% >> "%LOG_FILE%"
-echo    Log: %LOG_FILE% >> "%LOG_FILE%"
-echo ============================================================ >> "%LOG_FILE%"
+REM Rotate previous log
+if exist "%LOG_FILE%" (
+    if exist "%LOG_FILE%.prev" del /f /q "%LOG_FILE%.prev" >nul 2>&1
+    move /y "%LOG_FILE%" "%LOG_FILE%.prev" >nul 2>&1
+)
 
-REM Check if npm is available in PATH
+call :log "============================================================"
+call :log "   Date-Tool Dev Server - %date% %time%"
+call :log "   Log: %LOG_FILE%"
+call :log "============================================================"
+
+REM Ensure common Node.js install paths are on PATH
+if exist "%ProgramFiles%\nodejs\npm.cmd" set "PATH=%ProgramFiles%\nodejs;%PATH%"
+if exist "%ProgramFiles(x86)%\nodejs\npm.cmd" set "PATH=%ProgramFiles(x86)%\nodejs;%PATH%"
+if exist "%LOCALAPPDATA%\Programs\nodejs\npm.cmd" set "PATH=%LOCALAPPDATA%\Programs\nodejs;%PATH%"
+
 where npm >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] npm not found in PATH. >> "%LOG_FILE%"
-    echo [ERROR] Please install Node.js or add npm to your PATH. >> "%LOG_FILE%"
+if errorlevel 1 (
+    call :log "[ERROR] npm not found in PATH. Please install Node.js."
+    echo [ERROR] npm not found in PATH. Please install Node.js.
     exit /b 1
 )
 
-REM Check if node_modules exists; warn if not
-if not exist "node_modules" (
-    echo [WARN] node_modules not found. Running npm install first... >> "%LOG_FILE%"
+if not exist "node_modules\" (
+    call :log "[WARN] node_modules not found. Running npm install..."
+    echo [WARN] node_modules not found. Running npm install...
     call npm install >> "%LOG_FILE%" 2>&1
-    if !errorlevel! neq 0 (
-        echo [ERROR] npm install failed. See log for details. >> "%LOG_FILE%"
+    if errorlevel 1 (
+        call :log "[ERROR] npm install failed. See log for details."
         exit /b 1
     )
 )
 
-REM Kill any process listening on port 3000
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000" ^| findstr "LISTENING"') do (
-    echo [INFO] Killing old process on port 3000 - PID: %%a >> "%LOG_FILE%"
+REM Kill anything already listening on port 3000
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":3000" ^| findstr "LISTENING"') do (
+    call :log "[INFO] Killing old process on port 3000 - PID: %%a"
     taskkill /PID %%a /F >nul 2>&1
-    ping -n 3 127.0.0.1 >nul
 )
+ping -n 2 127.0.0.1 >nul
 
-echo [INFO] Starting Next.js development server... >> "%LOG_FILE%"
-echo [INFO] Open http://localhost:3000 once the server is ready. >> "%LOG_FILE%"
-echo. >> "%LOG_FILE%"
+call :log "[INFO] Starting Next.js development server..."
+call :log "[INFO] Open http://127.0.0.1:3000 once the server is ready."
+call :log ""
 
+REM Only this script should write the log file
 call npm run dev >> "%LOG_FILE%" 2>&1
+set "EXIT_CODE=!errorlevel!"
 
-if %errorlevel% neq 0 (
-    echo. >> "%LOG_FILE%"
-    echo [ERROR] Dev server exited with an error. >> "%LOG_FILE%"
-    exit /b 1
+if not "!EXIT_CODE!"=="0" (
+    call :log ""
+    call :log "[ERROR] Dev server exited with code !EXIT_CODE!."
+    exit /b !EXIT_CODE!
 )
+exit /b 0
+
+:log
+echo(%~1
+echo(%~1>>"%LOG_FILE%"
+goto :eof

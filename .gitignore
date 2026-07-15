@@ -14,6 +14,9 @@ out/
 .DS_Store
 *.log
 
+# 运行时日志（dev 启动器轮转产生 dev-server.log / .prev，勿入库）
+logs/
+
 # TypeScript 增量构建缓存
 tsconfig.tsbuildinfo
 

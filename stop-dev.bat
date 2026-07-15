@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM Date-Tool 停止脚本 —— 杀掉 3000 端口上的 Next.js dev server
+REM Date-Tool stop script - kill process listening on port 3000
 REM ============================================================
 
 setlocal EnableDelayedExpansion
@@ -12,17 +12,20 @@ echo ============================================================
 echo.
 
 set KILLED=0
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000" ^| findstr "LISTENING"') do (
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":3000" ^| findstr "LISTENING"') do (
     echo [INFO] Killing PID %%a
     taskkill /PID %%a /F >nul 2>&1
-    if !errorlevel! == 0 (
+    if not errorlevel 1 (
         set KILLED=1
     )
 )
 
-if !KILLED! == 0 (
+if "!KILLED!"=="0" (
     echo [INFO] No process listening on port 3000. Nothing to stop.
+) else (
+    echo [INFO] Stopped.
 )
 
 echo.
-ping -n 3 127.0.0.1 >nul
+ping -n 2 127.0.0.1 >nul
+endlocal

@@ -31,7 +31,9 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 function dataDir(): string {
-  return process.env.DATA_DIR || path.join(process.cwd(), ".data");
+  // 与 lib/config.ts 保持一致，避免数据集与 settings 落到不同目录
+  const raw = process.env.DATA_DIR || ".data";
+  return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
 }
 
 function settingsPath(): string {
