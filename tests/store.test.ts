@@ -271,7 +271,7 @@ describe("updateAnalysis 历史（保留最近 3 次）", () => {
       options: [],
       narrative: "",
       createdAt: new Date(2026, 0, i + 1).toISOString(),
-      version: "0.2.0",
+      version: "v0.2.1",
     });
     await updateAnalysis(VALID_UUID, mk(1));
     await updateAnalysis(VALID_UUID, mk(2));

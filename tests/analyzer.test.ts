@@ -406,7 +406,7 @@ describe("analyzeDataset - 结果完整性", () => {
     expect(Array.isArray(result.evidence)).toBe(true);
     expect(Array.isArray(result.computedInsights)).toBe(true);
     expect(Array.isArray(result.warnings)).toBe(true);
-    expect(result.version).toBe("v0.2");
+    expect(result.version).toBe("v0.2.1");
     expect(result.charts.length).toBeGreaterThan(0);
     expect(result.options.length).toBe(result.charts.length);
   });

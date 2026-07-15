@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 这是什么
 
-Date-Tool（包名 `wecom-ops-dashboard`，v0.2）：个人本地数据分析与可视化工具。拖入 Excel/CSV → 预检校正字段 → **本地确定性引擎**算出所有图表与洞察 → 可选 LLM 生成自然语言解读。不配 LLM 密钥也能跑完整流程。技术栈 Next.js 14 (App Router) + React 18 + ECharts 5 + Zod，数据以 JSON 文件落盘，零原生依赖。
+Date-Tool（包名 `wecom-ops-dashboard`，v0.2.1）：个人本地数据分析与可视化工具。拖入 Excel/CSV → 预检校正字段 → **本地确定性引擎**算出所有图表与洞察 → 可选 LLM 生成自然语言解读。不配 LLM 密钥也能跑完整流程。技术栈 Next.js 14 (App Router) + React 18 + ECharts 5 + Zod，数据以 JSON 文件落盘，零原生依赖。
 
 深入背景见 `README.md`（功能/流程/目录）与 `ARCHITECTURE.md`（数据流/模块职责/约束）。规格见 `docs/`。
 

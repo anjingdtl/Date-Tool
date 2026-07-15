@@ -227,7 +227,7 @@ export async function analyzeDataset(
       evidence: local.evidence,
       computedInsights: insights,
       warnings,
-      version: "v0.2",
+      version: "v0.2.1",
     };
     emitFinal(hooks, result);
     return result;
@@ -310,7 +310,7 @@ export async function analyzeDataset(
     evidence: local.evidence,
     computedInsights: insights,
     warnings,
-    version: "v0.2",
+    version: "v0.2.1",
   };
   emitFinal(hooks, result);
   return result;

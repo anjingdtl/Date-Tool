@@ -144,4 +144,5 @@ docs/              # 规格文档
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) —— 架构与数据流说明
 - [CHANGELOG.md](./CHANGELOG.md) —— 版本变更记录
+- [docs/Date-Tool-v0.2.1-closure-spec.md](./docs/Date-Tool-v0.2.1-closure-spec.md) —— v0.2.1 收尾改造规格
 - [docs/Date-Tool-v0.2-optimization-spec.md](./docs/Date-Tool-v0.2-optimization-spec.md) —— v0.2 改造规格说明书

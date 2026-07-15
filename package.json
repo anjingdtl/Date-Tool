@@ -1,6 +1,6 @@
 {
   "name": "wecom-ops-dashboard",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Date-Tool —— 个人本地数据分析与辅助图表工具（导入预检、确定性分析、LLM 解读）",
   "scripts": {
