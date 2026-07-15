@@ -22,3 +22,9 @@ tsconfig.tsbuildinfo
 
 # 项目记忆（workbuddy 工作区记忆，仅本地 working tree 使用）
 .workbuddy/
+
+# Agent 临时工作产物（不属产品代码）
+clound
+*.agent-memory
+.agent/
+.trae/
