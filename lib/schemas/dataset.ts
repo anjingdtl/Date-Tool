@@ -47,6 +47,10 @@ export const ColumnMetaSchema = z.object({
   nullRate: z.number().min(0).max(1).optional(),
   distinctCount: z.number().int().min(0).optional(),
   confidence: z.number().min(0).max(1).optional(),
+  typeDistribution: z
+    .record(z.enum(["number", "string", "date", "boolean"]), z.number())
+    .optional(),
+  sampleNonNullCount: z.number().int().min(0).optional(),
   includeInAnalysis: z.boolean().optional(),
   defaultAggregation: AggregationSchema.optional(),
   userModified: z.boolean().optional(),

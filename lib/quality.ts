@@ -77,8 +77,32 @@ export function generateDataQuality(input: QualityInput): DataQualityReport {
         message: `列「${c.name}」空值率 ${(nullRate * 100).toFixed(0)}%，可能影响分析。`,
       });
     }
-    // MIXED_TYPE（阶段 6 会改为基于 typeDistribution 的真实判断）
-    if (c.type !== "string" && c.confidence !== undefined && c.confidence < 0.8) {
+    // MIXED_TYPE（SPEC 11.1）：基于 typeDistribution 真实判断，不依赖最终推断类型
+    const td = c.typeDistribution;
+    if (td) {
+      const counts = [td.number, td.date, td.boolean, td.string].sort(
+        (a, b) => b - a,
+      );
+      const total = counts.reduce((a, b) => a + b, 0);
+      if (total >= 5) {
+        const main = counts[0] ?? 0;
+        const second = counts[1] ?? 0;
+        if (second / total >= 0.1 || main / total < 0.9) {
+          const parts: string[] = [];
+          if (td.number) parts.push("数字");
+          if (td.date) parts.push("日期");
+          if (td.boolean) parts.push("布尔");
+          if (td.string) parts.push("文本");
+          warnings.push({
+            code: "MIXED_TYPE",
+            level: "warning",
+            field: c.name,
+            message: `字段「${c.name}」包含混合类型（${parts.join("与")}），建议检查或拆分。`,
+          });
+        }
+      }
+    } else if (c.confidence !== undefined && c.confidence < 0.8) {
+      // 旧数据无 typeDistribution 时回退
       warnings.push({
         code: "MIXED_TYPE",
         level: "info",

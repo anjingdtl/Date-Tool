@@ -108,6 +108,15 @@ export function parseDateValue(v: unknown): string | null {
     if (validYmd(y, mo, d)) return `${y}-${pad2(mo)}-${pad2(d)}`;
   }
 
+  // M/D/YYYY 或 MM/DD/YYYY（年在后，SPEC 11.5）
+  const m3 = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (m3) {
+    const mo = Number(m3[1]);
+    const d = Number(m3[2]);
+    const y = Number(m3[3]);
+    if (validYmd(y, mo, d)) return `${y}-${pad2(mo)}-${pad2(d)}`;
+  }
+
   return null;
 }
 

@@ -50,6 +50,10 @@ export interface ColumnMeta {
   distinctCount?: number;
   /** 推断置信度 0~1，v0.2 新增 */
   confidence?: number;
+  /** 采样类型分布（v0.2.1 新增，用于 MIXED_TYPE 真实判断，SPEC 10.4 / 11.1） */
+  typeDistribution?: Record<ColumnType, number>;
+  /** 采样非空数（v0.2.1 新增，confidence 的分母，SPEC 10.3） */
+  sampleNonNullCount?: number;
   /** 是否参与分析，v0.2 新增（默认 true） */
   includeInAnalysis?: boolean;
   /** 默认聚合方式，v0.2 新增 */

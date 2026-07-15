@@ -84,65 +84,95 @@ interface ColumnProfile {
   distinctCount: number;
   confidence: number;
   sampleValues: unknown[];
+  typeDistribution: Record<ColumnType, number>;
+  sampleNonNullCount: number;
 }
 
 /**
- * 采样推断列类型 / 格式 / 空值率 / 去重数 / 置信度。
+ * 均匀采样行索引（SPEC 10.2）：rowCount ≤ maxSamples 全量；否则等距覆盖头/中/尾。
+ * 用 `index = floor(i * (rowCount-1) / (maxSamples-1))`，去重后返回。
  */
-function profileColumn(
+export function sampleRowIndices(rowCount: number, maxSamples = 500): number[] {
+  if (rowCount <= 0) return [];
+  if (rowCount <= maxSamples) {
+    return Array.from({ length: rowCount }, (_, i) => i);
+  }
+  const set = new Set<number>();
+  for (let i = 0; i < maxSamples; i++) {
+    const idx = Math.floor((i * (rowCount - 1)) / (maxSamples - 1));
+    set.add(idx);
+  }
+  return [...set];
+}
+
+/**
+ * 均匀采样推断列类型 / 格式 / 空值率 / 去重数 / 置信度 / 类型分布（SPEC 10）。
+ *
+ * - 空值 / distinct / sampleValues 全量统计；
+ * - 类型探测只在均匀采样行上做，分母为 sampleNonNullCount（非全表）；
+ * - confidence = 最终类型在样本中的占比（SPEC 10.5）；空列 confidence = 0。
+ */
+export function profileColumn(
   rows: DatasetRow[],
   name: string,
 ): ColumnProfile {
-  const probeCount = Math.min(SAMPLE_SIZE, rows.length);
+  const sampleSet = new Set(sampleRowIndices(rows.length, SAMPLE_SIZE));
   let nullCount = 0;
+  let sampleNonNull = 0;
   let numberCount = 0;
   let dateCount = 0;
   let boolCount = 0;
-  let nonNull = 0;
   const distinctSet = new Set<string>();
   const sampleValues: unknown[] = [];
+  const typeDistribution: Record<ColumnType, number> = {
+    number: 0,
+    date: 0,
+    boolean: 0,
+    string: 0,
+  };
   let detectedFormat: FieldFormat = "plain";
 
   for (let i = 0; i < rows.length; i++) {
     const v = rows[i][name];
-    const isNull =
-      v === null || v === undefined || v === "";
+    const isNull = v === null || v === undefined || v === "";
     if (isNull) {
       nullCount++;
       continue;
     }
-    nonNull++;
     // distinctCount 用全量（≤ MAX_STORED_ROWS，可接受）
     distinctSet.add(typeof v === "object" ? JSON.stringify(v) : String(v));
     if (sampleValues.length < 5) sampleValues.push(v);
 
-    if (i < probeCount) {
+    if (sampleSet.has(i)) {
+      sampleNonNull++;
       if (v === true || v === false || v === "true" || v === "false") {
         boolCount++;
+        typeDistribution.boolean++;
         continue;
       }
       const np = parseNumberValue(v);
       if (np.value !== null) {
         numberCount++;
+        typeDistribution.number++;
         if (np.format !== "plain") detectedFormat = np.format;
         continue;
       }
       const dp = parseDateValue(v);
       if (dp) {
         dateCount++;
+        typeDistribution.date++;
         continue;
       }
+      typeDistribution.string++;
     }
   }
 
-  const total = rows.length || 1;
   let type: ColumnType = "string";
   let format: FieldFormat = "plain";
-  let confidence = nonNull > 0 ? nonNull / total : 0;
+  let confidence = 0; // 空列 confidence = 0
 
-  if (nonNull > 0) {
-    const sampleNonNull = Math.min(probeCount, nonNull);
-    if (sampleNonNull > 0 && boolCount === sampleNonNull) {
+  if (sampleNonNull > 0) {
+    if (boolCount / sampleNonNull >= 0.9) {
       type = "boolean";
       format = "plain";
       confidence = boolCount / sampleNonNull;
@@ -153,13 +183,11 @@ function profileColumn(
     } else if (numberCount / sampleNonNull >= 0.8) {
       type = "number";
       format = detectedFormat === "plain" ? "decimal" : detectedFormat;
-      // 整数判定：采样所有数值是否整数
       confidence = numberCount / sampleNonNull;
     } else {
       type = "string";
       format = "plain";
-      confidence = 1 - numberCount / sampleNonNull - dateCount / sampleNonNull;
-      if (confidence < 0) confidence = 0;
+      confidence = typeDistribution.string / sampleNonNull;
     }
   }
 
@@ -183,6 +211,8 @@ function profileColumn(
     distinctCount: distinctSet.size,
     confidence,
     sampleValues,
+    typeDistribution,
+    sampleNonNullCount: sampleNonNull,
   };
 }
 
@@ -211,6 +241,8 @@ function buildColumns(
       nullRate,
       distinctCount: p.distinctCount,
       confidence: p.confidence,
+      typeDistribution: p.typeDistribution,
+      sampleNonNullCount: p.sampleNonNullCount,
       includeInAnalysis: true,
       defaultAggregation,
       userModified: false,
