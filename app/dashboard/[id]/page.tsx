@@ -25,7 +25,9 @@ export default function DashboardPage() {
   const [charts, setCharts] = useState<ChartSpec[]>([]);
   const [options, setOptions] = useState<EChartsOption[]>([]);
   const [narrative, setNarrative] = useState("");
-  const [provider, setProvider] = useState<"mock" | "llm" | undefined>();
+  const [provider, setProvider] = useState<
+    "local" | "local+llm" | "mock" | "llm" | undefined
+  >();
   const [streaming, setStreaming] = useState(false);
   const [runError, setRunError] = useState("");
 
@@ -70,7 +72,7 @@ export default function DashboardPage() {
           setOptions(p.options);
         },
         onToken: (t) => setNarrative((prev) => prev + t),
-        onDone: (m) => setProvider(m.provider as "mock" | "llm"),
+        onDone: (m) => setProvider(m.provider),
         onError: (m) => setRunError(m),
       });
     } catch (e) {

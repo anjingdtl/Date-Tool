@@ -9,7 +9,7 @@ export default function InsightPanel({
   insights: string[];
   narrative: string;
   streaming: boolean;
-  provider?: "mock" | "llm";
+  provider?: "local" | "local+llm" | "mock" | "llm";
 }) {
   return (
     <div className="card">

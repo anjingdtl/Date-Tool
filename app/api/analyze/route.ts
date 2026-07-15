@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { analyzeDataset } from "@/lib/analyzer";
-import { getDataset, updateAnalysis } from "@/lib/store";
+import { getDataset, updateAnalysis, isValidDatasetId } from "@/lib/store";
 import { newRequestId } from "@/lib/respond";
 import { logger } from "@/lib/logger";
 import type { ChartSpec, EChartsOption } from "@/lib/types";
@@ -26,6 +26,12 @@ export async function POST(req: NextRequest) {
   if (!datasetId) {
     return new Response(
       JSON.stringify({ title: "BAD_REQUEST", status: 400, detail: "缺少 datasetId" }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  if (!isValidDatasetId(datasetId)) {
+    return new Response(
+      JSON.stringify({ title: "BAD_REQUEST", status: 400, detail: "数据集 ID 不是合法 UUID" }),
       { status: 400, headers: { "Content-Type": "application/json" } },
     );
   }

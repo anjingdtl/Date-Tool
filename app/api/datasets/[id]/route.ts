@@ -3,8 +3,9 @@ import {
   deleteDataset,
   getDataset,
   getPublicDataset,
+  isValidDatasetId,
 } from "@/lib/store";
-import { NotFoundError } from "@/lib/errors";
+import { BadRequestError, NotFoundError } from "@/lib/errors";
 import { fail, newRequestId, ok } from "@/lib/respond";
 
 export const runtime = "nodejs";
@@ -18,6 +19,9 @@ export async function GET(
 ) {
   const requestId = newRequestId();
   try {
+    if (!isValidDatasetId(params.id)) {
+      throw new BadRequestError("数据集 ID 不是合法 UUID");
+    }
     const ds = await getDataset(params.id);
     if (!ds) throw new NotFoundError("数据集不存在");
     const pub = await getPublicDataset(params.id);
@@ -25,6 +29,9 @@ export async function GET(
       ...pub,
       previewRows: ds.rows.slice(0, PREVIEW_ROWS),
       analysis: ds.analysis,
+      quality: ds.quality,
+      config: ds.config,
+      analyses: ds.analyses ?? (ds.analysis ? [ds.analysis] : []),
     });
   } catch (err) {
     return fail(err, requestId);
@@ -37,6 +44,9 @@ export async function DELETE(
 ) {
   const requestId = newRequestId();
   try {
+    if (!isValidDatasetId(params.id)) {
+      throw new BadRequestError("数据集 ID 不是合法 UUID");
+    }
     const okDeleted = await deleteDataset(params.id);
     if (!okDeleted) throw new NotFoundError("数据集不存在");
     return ok({ deleted: true });

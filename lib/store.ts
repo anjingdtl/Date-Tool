@@ -1,42 +1,102 @@
 import fs from "fs/promises";
 import path from "path";
-import { z } from "zod";
 import { config } from "./config";
-import type { Dataset, PublicDataset, StoredDataset, AnalysisResult } from "./types";
+import {
+  DatasetIdSchema,
+  isValidDatasetId,
+} from "./schemas/dataset";
+import type {
+  AnalysisResult,
+  DatasetAnalysisConfig,
+  DataQualityReport,
+  DatasetRow,
+  DatasetStatus,
+  PublicDataset,
+  StoredDataset,
+} from "./types";
+
+// re-export 保持向后兼容（其它模块从 @/lib/store 导入）
+export { DatasetIdSchema, isValidDatasetId };
 
 const DATASET_DIR = path.join(config.dataDir, "datasets");
 
-/** 统一的数据集 ID 校验：必须是 UUID，防止路径遍历与非法输入 */
-export const DatasetIdSchema = z.string().uuid();
-
-export function isValidDatasetId(id: string): boolean {
-  return DatasetIdSchema.safeParse(id).success;
-}
-
-async function ensureDir(): Promise<void> {
+async function ensureBaseDir(): Promise<void> {
   await fs.mkdir(DATASET_DIR, { recursive: true });
 }
 
-function filePath(id: string): string {
+function datasetDir(id: string): string {
+  return path.join(DATASET_DIR, id);
+}
+function metaPath(id: string): string {
+  return path.join(datasetDir(id), "meta.json");
+}
+function rowsPath(id: string): string {
+  return path.join(datasetDir(id), "rows.json");
+}
+function analysesPath(id: string): string {
+  return path.join(datasetDir(id), "analyses.json");
+}
+function legacyPath(id: string): string {
   return path.join(DATASET_DIR, `${id}.json`);
 }
+function legacyBakPath(id: string): string {
+  return path.join(DATASET_DIR, `${id}.json.bak`);
+}
 
-function toPublic(ds: StoredDataset): PublicDataset {
+/** meta 文件结构（不含 rows / analysis / analyses） */
+interface DatasetMeta {
+  id: string;
+  name: string;
+  fileName: string;
+  source: "csv" | "excel";
+  rowCount: number;
+  originalRowCount?: number;
+  storedRowCount?: number;
+  sheetName?: string;
+  columns: StoredDataset["columns"];
+  createdAt: string;
+  status?: DatasetStatus;
+  quality?: DataQualityReport;
+  config?: DatasetAnalysisConfig;
+}
+
+function toMeta(ds: StoredDataset): DatasetMeta {
   return {
     id: ds.id,
     name: ds.name,
     fileName: ds.fileName,
     source: ds.source,
     rowCount: ds.rowCount,
+    originalRowCount: ds.originalRowCount,
+    storedRowCount: ds.storedRowCount,
+    sheetName: ds.sheetName,
     columns: ds.columns,
     createdAt: ds.createdAt,
-    hasAnalysis: !!ds.analysis,
+    status: ds.status,
+    quality: ds.quality,
+    config: ds.config,
+  };
+}
+
+function toPublic(meta: DatasetMeta, hasAnalysis: boolean): PublicDataset {
+  return {
+    id: meta.id,
+    name: meta.name,
+    fileName: meta.fileName,
+    source: meta.source,
+    rowCount: meta.rowCount,
+    originalRowCount: meta.originalRowCount,
+    storedRowCount: meta.storedRowCount,
+    sheetName: meta.sheetName,
+    columns: meta.columns,
+    createdAt: meta.createdAt,
+    status: meta.status,
+    hasAnalysis,
   };
 }
 
 /**
  * 原子写入 JSON：先写同目录临时文件，再 rename，失败清理临时文件。
- * 避免写入中途崩溃导致数据集文件损坏。
  */
 export async function saveJsonAtomic(file: string, data: unknown): Promise<void> {
   const dir = path.dirname(file);
@@ -53,20 +113,88 @@ export async function saveJsonAtomic(file: string, data: unknown): Promise<void>
   }
 }
 
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 旧格式迁移：{id}.json 单文件 → {id}/meta.json + rows.json + analyses.json
+ * 保留旧文件为 .bak；迁移失败时不删旧文件（spec 16.5）。
+ */
+async function migrateLegacy(id: string): Promise<boolean> {
+  const legacy = legacyPath(id);
+  const targetDir = datasetDir(id);
+  if (!(await pathExists(legacy))) return false;
+  if (await pathExists(targetDir)) {
+    // 新目录已存在，说明已迁移过；旧文件冗余，改 bak
+    await fs.rename(legacy, legacyBakPath(id)).catch(() => {});
+    return true;
+  }
+  try {
+    const raw = await fs.readFile(legacy, "utf-8");
+    const ds = JSON.parse(raw) as StoredDataset;
+    await fs.mkdir(targetDir, { recursive: true });
+    await saveJsonAtomic(metaPath(id), toMeta(ds));
+    await saveJsonAtomic(rowsPath(id), ds.rows ?? []);
+    const analyses =
+      ds.analyses ?? (ds.analysis ? [ds.analysis] : []);
+    await saveJsonAtomic(analysesPath(id), analyses);
+    // 保留旧文件为 .bak
+    await fs.rename(legacy, legacyBakPath(id));
+    return true;
+  } catch {
+    // 迁移失败：保留旧文件只读，不丢失数据
+    return false;
+  }
+}
+
 export async function saveDataset(ds: StoredDataset): Promise<void> {
   if (!isValidDatasetId(ds.id)) {
     throw new Error(`[store] 拒绝保存：数据集 ID 不是合法 UUID：${ds.id}`);
   }
-  await ensureDir();
-  await saveJsonAtomic(filePath(ds.id), ds);
+  await ensureBaseDir();
+  await fs.mkdir(datasetDir(ds.id), { recursive: true });
+  await saveJsonAtomic(metaPath(ds.id), toMeta(ds));
+  await saveJsonAtomic(rowsPath(ds.id), ds.rows ?? []);
+  const analyses =
+    ds.analyses ?? (ds.analysis ? [ds.analysis] : []);
+  await saveJsonAtomic(analysesPath(ds.id), analyses);
 }
 
 export async function getDataset(id: string): Promise<StoredDataset | null> {
-  // 存储层拒绝非 UUID，且不访问文件系统（防路径遍历）
   if (!isValidDatasetId(id)) return null;
+
+  // 新目录不存在时尝试迁移旧格式
+  if (!(await pathExists(datasetDir(id)))) {
+    const migrated = await migrateLegacy(id);
+    if (!migrated) return null;
+  }
+
   try {
-    const raw = await fs.readFile(filePath(id), "utf-8");
-    return JSON.parse(raw) as StoredDataset;
+    const metaRaw = await fs.readFile(metaPath(id), "utf-8");
+    const meta = JSON.parse(metaRaw) as DatasetMeta;
+    let rows: DatasetRow[] = [];
+    try {
+      const rowsRaw = await fs.readFile(rowsPath(id), "utf-8");
+      rows = JSON.parse(rowsRaw) as DatasetRow[];
+    } catch {
+      /* rows 损坏 → 空数组，不阻断 */
+    }
+    let analyses: AnalysisResult[] = [];
+    try {
+      const anRaw = await fs.readFile(analysesPath(id), "utf-8");
+      const parsed = JSON.parse(anRaw);
+      if (Array.isArray(parsed)) analyses = parsed as AnalysisResult[];
+    } catch {
+      /* analyses 损坏或不存在 → 空数组 */
+    }
+    const analysis = analyses.length ? analyses[analyses.length - 1] : null;
+    return { ...meta, rows, analysis, analyses };
   } catch {
     return null;
   }
@@ -74,33 +202,121 @@ export async function getDataset(id: string): Promise<StoredDataset | null> {
 
 export async function getPublicDataset(id: string): Promise<PublicDataset | null> {
   const ds = await getDataset(id);
-  return ds ? toPublic(ds) : null;
+  if (!ds) return null;
+  return toPublic(toMeta(ds), !!ds.analysis);
 }
 
 export async function listDatasets(): Promise<PublicDataset[]> {
-  await ensureDir();
-  const files = await fs.readdir(DATASET_DIR);
+  await ensureBaseDir();
+  let entries: string[] = [];
+  try {
+    entries = await fs.readdir(DATASET_DIR);
+  } catch {
+    return [];
+  }
   const out: PublicDataset[] = [];
-  for (const f of files) {
-    if (!f.endsWith(".json")) continue;
+  for (const entry of entries) {
+    // 跳过备份文件
+    if (entry.endsWith(".bak")) continue;
+
+    if (entry.endsWith(".json")) {
+      // 旧格式单文件：尝试迁移后读 meta
+      const id = entry.slice(0, -5);
+      if (!isValidDatasetId(id)) continue;
+      const migrated = await migrateLegacy(id);
+      if (!migrated) {
+        // 迁移失败：直接读旧文件（容忍性能开销，保证不丢数据）
+        try {
+          const raw = await fs.readFile(path.join(DATASET_DIR, entry), "utf-8");
+          const ds = JSON.parse(raw) as StoredDataset;
+          out.push(toPublic(toMeta(ds), !!ds.analysis));
+        } catch {
+          /* 损坏文件跳过 */
+        }
+        continue;
+      }
+      // 迁移成功：读 meta
+      try {
+        const meta = JSON.parse(
+          await fs.readFile(metaPath(id), "utf-8"),
+        ) as DatasetMeta;
+        const hasAnalysis = await readHasAnalysis(id);
+        out.push(toPublic(meta, hasAnalysis));
+      } catch {
+        /* meta 损坏跳过 */
+      }
+      continue;
+    }
+
+    // 子目录：读 meta.json（不读 rows，性能优化 spec 16.2/22）
+    const dir = path.join(DATASET_DIR, entry);
+    let stat;
     try {
-      const raw = await fs.readFile(path.join(DATASET_DIR, f), "utf-8");
-      out.push(toPublic(JSON.parse(raw) as StoredDataset));
+      stat = await fs.stat(dir);
     } catch {
-      // 跳过损坏文件，不影响其他数据集展示
+      continue;
+    }
+    if (!stat.isDirectory()) continue;
+    if (!isValidDatasetId(entry)) continue;
+    const id = entry;
+    try {
+      const meta = JSON.parse(
+        await fs.readFile(metaPath(id), "utf-8"),
+      ) as DatasetMeta;
+      const hasAnalysis = await readHasAnalysis(id);
+      out.push(toPublic(meta, hasAnalysis));
+    } catch {
+      /* 子目录无 meta 或损坏 → 跳过 */
     }
   }
   return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-export async function deleteDataset(id: string): Promise<boolean> {
-  if (!isValidDatasetId(id)) return false;
+async function readHasAnalysis(id: string): Promise<boolean> {
   try {
-    await fs.unlink(filePath(id));
-    return true;
+    const raw = await fs.readFile(analysesPath(id), "utf-8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0;
   } catch {
     return false;
   }
+}
+
+export async function deleteDataset(id: string): Promise<boolean> {
+  if (!isValidDatasetId(id)) return false;
+  const dirExists = await pathExists(datasetDir(id));
+  const legacyExists = await pathExists(legacyPath(id));
+  const bakExists = await pathExists(legacyBakPath(id));
+  if (!dirExists && !legacyExists && !bakExists) return false;
+
+  let deleted = false;
+  // 删新目录
+  if (dirExists) {
+    try {
+      await fs.rm(datasetDir(id), { recursive: true, force: true });
+      deleted = true;
+    } catch {
+      /* ignore */
+    }
+  }
+  // 删旧文件与备份
+  if (legacyExists) {
+    try {
+      await fs.unlink(legacyPath(id));
+      deleted = true;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (bakExists) {
+    try {
+      await fs.unlink(legacyBakPath(id));
+      deleted = true;
+    } catch {
+      /* ignore */
+    }
+  }
+  return deleted;
 }
 
 export async function updateAnalysis(
@@ -109,6 +325,12 @@ export async function updateAnalysis(
 ): Promise<void> {
   const ds = await getDataset(id);
   if (!ds) return;
+  // 追加到历史，保留最近 3 次（spec 14.4）
+  const histories = ds.analyses ?? (ds.analysis ? [ds.analysis] : []);
+  ds.analyses = [...histories, analysis].slice(-3);
   ds.analysis = analysis;
+  if (ds.status === "analyzing" || !ds.status) {
+    ds.status = "completed";
+  }
   await saveDataset(ds);
 }

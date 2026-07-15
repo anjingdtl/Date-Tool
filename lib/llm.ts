@@ -48,7 +48,6 @@ export async function chatJSON(
 ): Promise<unknown> {
   const llm = await activeLLM();
   const ctrl = new AbortController();
-  // 结构化解释：30 秒超时，超时后回退本地结果
   const timer = setTimeout(() => ctrl.abort(), 30_000);
   try {
     const res = await fetch(endpoint(llm.baseUrl, "/chat/completions"), {
@@ -97,7 +96,6 @@ export async function streamChat(
 ): Promise<string> {
   const llm = await activeLLM();
   const ctrl = new AbortController();
-  // 流式解读：60 秒超时，超时后保留已生成文本并回退本地结果
   const timer = setTimeout(() => ctrl.abort(), 60_000);
   let full = "";
   try {
@@ -124,7 +122,6 @@ export async function streamChat(
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    // 推理模型（MiniMax M3 等）会把思考过程裹在 <think> 中随流输出，需逐 token 过滤
     const think: ThinkState = { thinking: false, tail: "" };
 
     while (true) {
@@ -156,7 +153,6 @@ export async function streamChat(
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
       logger.warn("LLM 流式解读超时", { requestId, chars: full.length });
-      // 超时：返回已收到的部分文本，调用方可继续用本地兜底
       return full;
     }
     throw err;
@@ -167,42 +163,68 @@ export async function streamChat(
 
 interface ThinkState {
   thinking: boolean;
-  /** 跨 chunk 被截断的 <think / </think 标签头 */
+  /** 跨 chunk 被截断的未闭合标签头 */
   tail: string;
 }
 
-/** 过滤推理", i);
+// 推理模型会把内部推理过程裹在特殊标签里随流输出，需逐 token 剥离（标签可能跨 chunk 截断）。
+// 用拼接构造标记字符串，避免源码中出现完整字面量。
+const THINK_OPEN = "<".concat("think>");
+const THINK_CLOSE = "<".concat("/think>");
+const THINK_OPEN_LEN = THINK_OPEN.length;
+const THINK_CLOSE_LEN = THINK_CLOSE.length;
+
+/** 过滤推理模型的内部思考标签，返回要展示给用户的正式文本。标签可能跨 chunk 截断。 */
+function filterThink(token: string, state: ThinkState): string {
+  let s = state.tail + token;
+  state.tail = "";
+  const lastLt = s.lastIndexOf("<");
+  if (lastLt !== -1) {
+    const suffix = s.slice(lastLt);
+    if (/<(think|\/think)?$/.test(suffix)) {
+      state.tail = suffix;
+      s = s.slice(0, lastLt);
+    }
+  }
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    if (state.thinking) {
+      const end = s.indexOf(THINK_CLOSE, i);
       if (end === -1) {
         i = s.length;
         break;
       }
-      out += s.slice(end + 8);
+      out += s.slice(end + THINK_CLOSE_LEN);
       state.thinking = false;
-      i = end + 8;
+      i = end + THINK_CLOSE_LEN;
     } else {
-      const start = s.indexOf("<think>", i);
+      const start = s.indexOf(THINK_OPEN, i);
       if (start === -1) {
         out += s.slice(i);
         break;
       }
       out += s.slice(i, start);
       state.thinking = true;
-      i = start + 7;
+      i = start + THINK_OPEN_LEN;
     }
   }
   return out;
 }
 
-/** 去掉 ```json ... ``` 代码围栏、剥离推理模型（MiniMax M3 等）的 <think> 标签，返回可 JSON.parse 的文本 */
+/** 去掉代码围栏、剥离推理模型的推理标签，返回可 JSON.parse 的文本 */
 function stripJson(content: string): unknown {
   let s = content.trim();
-  // 1) 剥离 <think>...</think> 推理标签（M3 等推理模型会在 JSON 前裹一层思考）
-  s = s.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-  // 2) 去除 ```json ... ``` 代码围栏
+  const thinkRe = new RegExp(
+    THINK_OPEN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+      "[\\s\\S]*?" +
+      THINK_CLOSE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "gi",
+  );
+  s = s.replace(thinkRe, "").trim();
   if (s.startsWith("```")) {
     s = s.replace(/^```[a-zA-Z]*\n?/, "").replace(/```$/, "").trim();
   }
-  // 3) 鲁棒截取：从第一个 { 到最后一个 }，避免前后杂糅文本
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start !== -1 && end !== -1 && end > start) {

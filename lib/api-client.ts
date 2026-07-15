@@ -62,7 +62,10 @@ export interface AnalyzeHooks {
     options: EChartsOption[];
   }) => void;
   onToken?: (text: string) => void;
-  onDone?: (meta: { provider: string; createdAt: string }) => void;
+  onDone?: (meta: {
+    provider: "local" | "local+llm" | "mock" | "llm";
+    createdAt: string;
+  }) => void;
   onError?: (message: string) => void;
 }
 

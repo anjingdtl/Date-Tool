@@ -10,6 +10,10 @@ REM ============================================================
 
 setlocal EnableDelayedExpansion
 
+REM Windows 一键启动：启用「关闭 WebUI 自动关闭服务」
+REM 普通 npm run dev 不设此变量，默认关闭，避免开发调试意外退出
+set "AUTO_SHUTDOWN_ENABLED=true"
+
 cd /d "%~dp0"
 
 if not exist "logs" mkdir "logs"
