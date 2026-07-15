@@ -23,9 +23,6 @@ function providerLabel(p?: string): string {
       return "本地确定性分析";
     case "local+llm":
       return "本地计算 + LLM 解读";
-    case "llm":
-    case "mock":
-      return p.toUpperCase();
     default:
       return "";
   }
@@ -55,7 +52,7 @@ export default function InsightPanel({
   insights: string[];
   narrative: string;
   streaming: boolean;
-  provider?: "local" | "local+llm" | "mock" | "llm";
+  provider?: "local" | "local+llm";
   /** v0.2 阶段 H：分析阶段状态(SPEC 13.2) */
   stage?: string;
   /** v0.2 阶段 H：计算依据(SPEC 10.8) */

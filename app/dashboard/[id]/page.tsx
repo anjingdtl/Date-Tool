@@ -28,7 +28,7 @@ export default function DashboardPage() {
   const [options, setOptions] = useState<EChartsOption[]>([]);
   const [narrative, setNarrative] = useState("");
   const [provider, setProvider] = useState<
-    "local" | "local+llm" | "mock" | "llm" | undefined
+    "local" | "local+llm" | undefined
   >();
   const [streaming, setStreaming] = useState(false);
   const [runError, setRunError] = useState("");

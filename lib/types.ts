@@ -190,8 +190,8 @@ export interface ChartSpec {
 export type EChartsOption = Record<string, unknown>;
 
 export interface AnalysisResult {
-  /** v0.2：local 表示纯本地计算，local+llm 表示本地计算 + LLM 解读 */
-  provider: "local" | "local+llm" | "mock" | "llm";
+  /** v0.2.1：统一为 local（纯本地）/ local+llm（本地 + LLM 解读），旧 mock/llm 读取时迁移 */
+  provider: "local" | "local+llm";
   summary: string;
   insights: string[];
   charts: ChartSpec[];

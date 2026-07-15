@@ -2,8 +2,8 @@ import { NextRequest } from "next/server";
 import {
   deleteDataset,
   getDataset,
-  getPublicDataset,
   isValidDatasetId,
+  toPublicDataset,
 } from "@/lib/store";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
 import { fail, newRequestId, ok } from "@/lib/respond";
@@ -50,7 +50,8 @@ export async function GET(
       });
     }
 
-    const pub = await getPublicDataset(params.id);
+    // 直接从已读取的 ds 构造公开投影，避免二次读盘（SPEC 16）
+    const pub = toPublicDataset(ds);
     return ok({
       ...pub,
       previewRows: ds.rows.slice(0, PREVIEW_ROWS),

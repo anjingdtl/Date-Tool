@@ -100,6 +100,25 @@ function toPublic(meta: DatasetMeta, hasAnalysis: boolean): PublicDataset {
 }
 
 /**
+ * provider 归一化（SPEC 15.3）：旧缓存可能为 mock / llm，
+ * 读取时统一迁移为 local / local+llm。
+ */
+function normalizeProvider(p: string | undefined): "local" | "local+llm" {
+  return p === "local+llm" || p === "llm" ? "local+llm" : "local";
+}
+
+function normalizeAnalysis(a: AnalysisResult | null): AnalysisResult | null {
+  if (!a) return null;
+  const np = normalizeProvider(a.provider);
+  return np === a.provider ? a : { ...a, provider: np };
+}
+
+/** 从已读取的 StoredDataset 直接构造公开投影（SPEC 16，避免重复读盘） */
+export function toPublicDataset(ds: StoredDataset): PublicDataset {
+  return toPublic(toMeta(ds), !!ds.analysis);
+}
+
+/**
  * 原子写入 JSON：先写同目录临时文件，再 rename，失败清理临时文件。
  */
 export async function saveJsonAtomic(file: string, data: unknown): Promise<void> {
@@ -249,8 +268,11 @@ export async function getDataset(id: string): Promise<StoredDataset | null> {
     } catch {
       /* analyses 损坏或不存在 → 空数组 */
     }
-    const analysis = analyses.length ? analyses[analyses.length - 1] : null;
-    return { ...meta, rows, analysis, analyses };
+    const normalizedAnalyses = analyses.map((a) => normalizeAnalysis(a)!);
+    const analysis = normalizedAnalyses.length
+      ? normalizedAnalyses[normalizedAnalyses.length - 1]
+      : null;
+    return { ...meta, rows, analysis, analyses: normalizedAnalyses };
   } catch {
     return null;
   }

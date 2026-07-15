@@ -181,7 +181,7 @@ export interface AnalyzeHooks {
   /** SPEC 9.4: final 事件，LLM/local 完成后整体刷新 summary/图表/标题/行动建议 */
   onFinal?: (p: FinalAnalysisPayload) => void;
   onDone?: (meta: {
-    provider: "local" | "local+llm" | "mock" | "llm";
+    provider: "local" | "local+llm";
     createdAt: string;
   }) => void;
   onError?: (message: string) => void;

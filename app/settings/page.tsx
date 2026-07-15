@@ -143,6 +143,28 @@ export default function SettingsPage() {
     }
   }, [theme, provider, baseUrl, apiKey, model, hasRealKey]);
 
+  const handleClearKey = useCallback(async () => {
+    setStatus("saving");
+    setError("");
+    try {
+      const r = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ llm: { apiKey: "" } }),
+      });
+      const data = (await r.json()) as SettingsResponse;
+      setSettings(data);
+      setHasRealKey(data._hasRealKey);
+      setApiKey("");
+      setStatus("saved");
+      setSavedAt(Date.now());
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "清除失败");
+      setStatus("error");
+    }
+  }, []);
+
   const handleTest = useCallback(async () => {
     setStatus("testing");
     setTestMsg("");
@@ -241,7 +263,7 @@ export default function SettingsPage() {
         <div className="settings-section-head">
           <p className="section-title">LLM 配置</p>
           <p className="muted settings-hint">
-            填入 API Key 后即可启用真实 LLM 分析；不填则自动用本地 Mock 兜底。
+            填入 API Key 后即可启用真实 LLM 解读；不填则使用本地确定性分析（local）。
             配置修改后无需重启服务器，下一次分析自动生效。
           </p>
         </div>
@@ -331,6 +353,18 @@ export default function SettingsPage() {
             )}
           </button>
 
+          {hasRealKey && (
+            <button
+              type="button"
+              className="btn"
+              onClick={handleClearKey}
+              disabled={status === "saving"}
+              title="清除已保存的 API Key，回到本地模式"
+            >
+              清除 API Key
+            </button>
+          )}
+
           {testOk !== null && (
             <span
               className={`settings-test-pill ${testOk ? "ok" : "fail"}`}
@@ -351,7 +385,7 @@ export default function SettingsPage() {
           <span className="muted">
             运行时状态：
             <strong className={hasRealKey ? "ok-text" : "warn-text"}>
-              {hasRealKey ? "已启用真实 LLM" : "Mock 模式"}
+              {hasRealKey ? "已启用真实 LLM" : "本地模式（local）"}
             </strong>
             {hasRealKey && settings && (
               <> · 模型 <code className="inline-code">{settings.llm.model}</code></>

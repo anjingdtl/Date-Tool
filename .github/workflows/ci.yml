@@ -2,13 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, "fix/**", "feat/**"]
   pull_request:
     branches: [main, master]
 
 jobs:
   quality:
-    name: typecheck · test · build
+    name: check (typecheck · test · build)
     runs-on: ubuntu-latest
 
     steps:
@@ -24,11 +24,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test
-        run: npm run test
-
-      - name: Build
-        run: npm run build
+      # npm run check = typecheck + test + build，避免重复定义两套相同命令（SPEC 20）
+      - name: Check (typecheck + test + build)
+        run: npm run check

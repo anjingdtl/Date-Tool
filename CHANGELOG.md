@@ -1,5 +1,42 @@
 # 变更记录
 
+## v0.2.1 — 2026-07-15
+
+> 行为闭环与数据一致性收尾：让用户在预检页的每一个关键选择都真实影响最终图表、洞察、Evidence 与 LLM 解读。严格按 [v0.2.1 收尾规格](./docs/Date-Tool-v0.2.1-closure-spec.md) 第 25 节阶段 1→8 实施。
+
+### 新增
+
+- **运行时 LLM 配置**（`lib/llm-config.ts`）：设置页保存 API Key / 模型 / Base URL 后无需重启即生效；`enabled` 以最终 `apiKey` 计算，不再沿用持久化旧值。
+- **字段确认后重规范化**：confirm 按最终类型/格式重新规范化 rows、重算字段统计与质量报告（`normalizeRowsByColumns` / `recomputeColumnStats` / `generateDataQuality`，parse 与 confirm 共用）。
+- **聚合方式全链路**（`lib/analysis/aggregation.ts`）：`resolveAggregation` 统一解析用户聚合（sum/avg/count/min/max），贯穿趋势/分组/图表/证据；拦截 percentage+sum、identifier+avg/sum 等非法组合。
+- **SSE final 事件**：LLM/local 完成后一次性下发最终 summary / 图表标题 / 行动建议，前端整体刷新，避免只更新 provider。
+- **均匀采样与类型分布**：采样覆盖头/中/尾，`confidence` 分母改为 `sampleNonNullCount`，新增 `typeDistribution` 让 MIXED_TYPE 真实判断。
+- **INVALID_DATE / INVALID_NUMBER 警告**；真实日历校验（拒绝 `2026-02-31`）；日期支持 `M/D/YYYY`、`MM/DD/YYYY`。
+- **数据集状态机**：`/api/analyze` 校验状态，draft/analyzing 返回 409，分析前置 analyzing、成功 completed、失败 error。
+- **迁移可恢复**：旧数据迁移改用临时目录 `datasets/{id}.migrating/` + 半成品/`.bak` 恢复，失败可重试。
+- **设置 API 接 Zod + Base URL 协议校验 + `KEEP_API_KEY_TOKEN` + 清除 API Key 按钮**。
+
+### 变更
+
+- `provider` 统一为 `local | local+llm`，旧 `mock/llm` 读取时迁移。
+- `pickTrendAgg / pickComparisonAgg / pickAgg` 降级为 `resolveAggregation` 的兼容薄包装。
+- dataset 详情用 `toPublicDataset` 避免重复读盘。
+- 删除仓库根 `clound`（Agent 临时产物），`.gitignore` 补充忽略。
+- vitest `fileParallelism=false`，消除共享 DATA_DIR 的并行文件系统竞态。
+- README 去除「Mock 模式 / 流式逐字」等过时表述。
+
+### 测试
+
+- 新增 `llm-config / reconfigure-normalization / aggregation-flow / sse-final / type-sampling / dataset-state / migration-recovery` 7 个测试文件，测试总数 218 → 288。
+
+### 兼容性
+
+- 旧数据集正常迁移；旧 `mock/llm` provider 自动迁移为 `local/local+llm`。
+- 四套主题、PNG 复制下载、Windows 一键启动、SSE 流式全部保留。
+- 不依赖 LLM 仍可完成完整分析流程。
+
+---
+
 ## v0.2.0 — 2026-07-15
 
 > 本次改造围绕「数据识别更准确、图表生成更符合用户意图、分析结论有明确计算依据、本地使用更稳定」四项能力展开。严格按 [v0.2 改造规格](./docs/Date-Tool-v0.2-optimization-spec.md) 第 25 节阶段 A→H 顺序实施。
