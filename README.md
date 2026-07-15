@@ -1,20 +1,20 @@
 # 企微集约化托管运营 · 可视化数据仪表
 
-把一份 Excel / CSV 拖进来，系统自动解析、调用 LLM 生成洞察与图表建议，并渲染成可交互的可视化看板。
-没配大模型密钥时，内置「本地占卜师」启发式分析器，开箱即跑通完整流程。
+把一份 Excel / CSV 拖进来，系统先做数据预检与字段校正，再用**本地确定性引擎**算出所有图表与洞察，最后可选地由 LLM 生成自然语言解读。
+不配大模型密钥也能跑通完整分析流程；LLM 只负责解读，不参与数值计算。
 
-> 世恒哥专属：导入 → LLM 解读 → 发光图表墙，一条龙。
+> 世恒哥专属：导入 → 预检校正 → 本地算图 → LLM 解读，一条龙。
 
 ## ✨ 功能
 
-- **数据导入**：拖拽上传 `.xlsx / .xls / .csv`，自动解析、推断列类型（数值 / 文本 / 日期 / 布尔），落盘存储。
-- **LLM 自动分析**：基于 OpenAI 兼容接口（混元 / 通义 / DeepSeek / OpenAI 均可），产出
-  - 一句话总体结论
-  - 3~6 条可行动洞察
-  - 自动推荐的图表（趋势线 / 对比柱 / 构成饼 / 数据表）
-  - 一段「占卜师」式实时口播解读（**SSE 流式输出**）
-- **可视化看板**：ECharts 渲染的图表墙，支持时间趋势、分组对比、占比构成、原始数据预览。
-- **零原生依赖**：数据集以 JSON 文件存于 `.data/`，无需安装数据库即可运行。
+- **数据导入预检**：拖拽上传 `.xlsx / .xls / .csv`，自动解析、推断列类型与业务角色，进入预检页可校正字段类型 / 角色 / 格式 / 聚合方式。
+- **数据质量报告**：显示原始行数与实际存储行数、空值、重复行、混合类型、日期解析异常、高基数字段等警告。
+- **本地确定性分析**：所有关键数值（总数、均值、环比、分组汇总、状态占比、Top/Bottom、异常值、趋势）由本地代码计算，每条洞察都带可追溯的 `evidenceId` 计算依据。
+- **LLM 仅做解读**：基于 OpenAI 兼容接口（混元 / 通义 / DeepSeek / OpenAI 均可），LLM 只产出总结、叙述、行动建议与图表标题优化，不得修改字段映射或计算结果。
+- **流式输出**：本地结果先于 LLM 文本出现；LLM 叙述以 SSE 流式逐字呈现，分析阶段状态实时反馈。
+- **可视化看板**：ECharts 渲染的图表墙，支持时间趋势、分组对比、占比构成、原始数据预览，图表复制 PNG / 下载 PNG。
+- **四套主题**：Verdigris、Ocean、Sunset、Ink，液态玻璃 UI。
+- **零原生依赖**：数据集以 JSON 文件原子写入 `.data/`，无需安装数据库；Windows 一键启动脚本。
 
 ## 🧱 技术栈
 
@@ -23,9 +23,9 @@
 | 框架 | Next.js 14（App Router，前后端同仓） |
 | 前端 | React 18 + ECharts 5 |
 | 解析 | SheetJS(`xlsx`) 读 Excel，PapaParse 读 CSV |
-| 分析 | OpenAI 兼容 Chat Completions（含流式） |
-| 存储 | 文件型 JSON 存储（零原生依赖，可平滑替换为 Postgres/SQLite） |
-| 校验 | Zod 思路的类型化错误体系（自研 `AppError` 层级） |
+| 分析 | 本地确定性引擎（`lib/analysis/*`）+ OpenAI 兼容 Chat Completions（仅解读） |
+| 存储 | 文件型 JSON 原子写入（零原生依赖，可平滑替换为 Postgres/SQLite） |
+| 校验 | Zod 严格校验（Dataset ID / FieldConfig / ChartSpec / LLM 输出） |
 
 ## 🚀 快速开始
 
@@ -74,40 +74,54 @@ OPENAI_API_KEY=sk-xxxx                       # 填上即启用真实 LLM
 OPENAI_MODEL=gpt-4o-mini                     # 自选模型
 ```
 
-- **只要 `OPENAI_API_KEY` 非空**，系统就走真实 LLM；留空则自动回退到本地 Mock 分析器。
-- 结构化结论与流式解读会分别调用一次 Chat Completions。若模型不支持 `response_format: json_object`，结构化解析失败时也会安全回退 Mock，保证看板始终有图。
+- **只要 `OPENAI_API_KEY` 非空**，系统在本地分析完成后额外调用 LLM 做解读；留空则只走本地确定性引擎，看板照常有图有洞察。
+- LLM 只返回 `summary / narrative / actions / renamedChartTitles`，任何 LLM 调用失败都安全回退本地结果，保证看板始终可用。
 
 ## 🧭 使用流程
 
 1. 首页拖入一份运营数据表（如各托管账号的留言量、响应时长、满意度等）。
-2. 自动跳转看板页，点「运行分析 ✨」。
-3. 图表先弹出、解读文字逐字浮现（LLM 模式为实时流式）。
-4. 分析结果随数据集缓存，下次打开直接展示。
+2. 上传后进入**数据预检页**：查看数据质量报告、校正字段类型/角色/格式/聚合，点「生成看板」确认。
+3. 看板页点「运行分析」：本地引擎先算出图表与洞察（立即可见），再可选地由 LLM 流式生成解读。
+4. 点「查看计算依据」可展开每条洞察背后的 evidence（方法、样本数、字段、计算结果）。
+5. 分析结果随数据集缓存，下次打开直接展示；支持分析历史保留最近 3 次。
 
 ## 🗂️ 目录结构
 
 ```
 app/
   api/
-    datasets/route.ts            # POST 上传 / GET 列表
-    datasets/[id]/route.ts       # GET 详情(含分析缓存) / DELETE
-    analyze/route.ts             # POST 触发分析（SSE 流式）
-  dashboard/[id]/page.tsx        # 看板页
-  page.tsx                       # 首页（上传 + 列表）
+    datasets/route.ts                 # POST 上传 / GET 列表
+    datasets/[id]/route.ts            # GET 详情(含分析缓存) / DELETE
+    datasets/[id]/config/route.ts     # PUT 字段配置校正(SPEC 9.7 校验)
+    datasets/[id]/confirm/route.ts    # POST draft→ready 确认
+    analyze/route.ts                  # POST 触发分析（SSE 流式 + stage）
+    settings/route.ts, heartbeat, shutdown
+  dashboard/[id]/page.tsx             # 看板页
+  import/[draftId]/page.tsx           # 数据预检页(SPEC 9)
+  page.tsx                            # 首页（上传 + 列表）
   layout.tsx, globals.css
 components/
   Uploader / DatasetList / ChartCard / DataTable / InsightPanel
+  FieldConfigTable / QualityOverview  # 预检页组件
 lib/
-  config.ts      # 环境变量，fail-fast
-  errors.ts      # 类型化错误层级 + 统一响应体
-  logger.ts      # 结构化 JSON 日志
-  store.ts       # 文件型数据集存储
-  parse.ts       # CSV/Excel 解析 + 列类型推断
-  llm.ts         # OpenAI 兼容客户端（JSON / 流式）
-  analyzer.ts    # 分析编排：Mock + LLM
-  chart.ts       # 纯函数：ChartSpec + 数据 → ECharts 配置
-  api-client.ts  # 前端 typed fetch + SSE 解析
-  types.ts       # 共享类型
+  config.ts        # 环境变量，fail-fast
+  errors.ts        # 类型化错误层级 + 统一响应体 + ConflictError
+  logger.ts        # 结构化 JSON 日志
+  store.ts         # 文件型数据集存储 + 原子写入 + 三文件拆分
+  parse.ts         # CSV/Excel 解析 + 列类型推断 + 质量报告
+  normalize.ts     # 数值/日期标准化(千分位/百分比/金额/Excel序列)
+  llm.ts           # OpenAI 兼容客户端（JSON 30s / 流式 60s 超时）
+  llm-prompt.ts    # LLM 输入构造 + System Prompt + 输出 Zod 校验
+  analyzer.ts      # 分析编排：本地先算 → LLM 仅解读 → 失败回退
+  chart.ts         # 纯函数：ChartSpec + 数据 → ECharts 配置（TopN 截断）
+  api-client.ts    # 前端 typed fetch + SSE 解析（含 stage 事件）
+  types.ts         # 共享类型
+  schemas/         # Zod schemas：dataset / chart / settings
+  analysis/        # 确定性分析引擎(SPEC 10)
+    statistics.ts profile.ts trends.ts comparisons.ts
+    outliers.ts evidence.ts recommend-charts.ts index.ts
+tests/             # Vitest 单元测试
+docs/              # 规格文档
 ```
 
 ## 🔧 可扩展方向
@@ -120,6 +134,13 @@ lib/
 
 ## ⚠️ 已知限制
 
-- 单数据集默认最多存 5 万行（超出的部分截断，仅用于分析抽样）。
-- Mock 模式仅做基础统计与图表推荐，洞察为模板化生成；接入真实 LLM 后效果最佳。
+- 单数据集默认最多存 5 万行（超出的部分截断，分析结论会注明「基于已载入数据」）。
+- 不依赖 LLM 也能完成完整分析；接入 LLM 后额外获得自然语言解读与图表标题优化。
+- 本工具面向个人本地使用，不做多用户 / 登录 / RBAC / 云端数据库。
 - 图表配置在服务端预计算后随分析结果缓存，因此看板页无需搬运原始数据，轻量渲染。
+
+## 📚 更多文档
+
+- [ARCHITECTURE.md](./ARCHITECTURE.md) —— 架构与数据流说明
+- [CHANGELOG.md](./CHANGELOG.md) —— 版本变更记录
+- [docs/Date-Tool-v0.2-optimization-spec.md](./docs/Date-Tool-v0.2-optimization-spec.md) —— v0.2 改造规格说明书

@@ -7,7 +7,9 @@ import ChartCard from "@/components/ChartCard";
 import InsightPanel from "@/components/InsightPanel";
 import { getDataset, runAnalysis } from "@/lib/api-client";
 import type {
+  AnalysisEvidence,
   ChartSpec,
+  ComputedInsight,
   DatasetDetail,
   EChartsOption,
 } from "@/lib/types";
@@ -30,6 +32,16 @@ export default function DashboardPage() {
   >();
   const [streaming, setStreaming] = useState(false);
   const [runError, setRunError] = useState("");
+  /** v0.2 阶段 H：分析阶段状态(SPEC 13.2) */
+  const [stage, setStage] = useState("");
+  /** v0.2 阶段 H：计算依据(SPEC 10.8) */
+  const [evidence, setEvidence] = useState<AnalysisEvidence[]>([]);
+  /** v0.2 阶段 H：本地确定性洞察(SPEC 10.8) */
+  const [computedInsights, setComputedInsights] = useState<ComputedInsight[]>(
+    [],
+  );
+  /** v0.2 阶段 H：数据警告(SPEC 8.8/10.7) */
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -42,6 +54,9 @@ export default function DashboardPage() {
         setOptions(d.analysis.options);
         setNarrative(d.analysis.narrative);
         setProvider(d.analysis.provider);
+        setEvidence(d.analysis.evidence ?? []);
+        setComputedInsights(d.analysis.computedInsights ?? []);
+        setWarnings(d.analysis.warnings ?? []);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载失败");
@@ -63,6 +78,10 @@ export default function DashboardPage() {
     setOptions([]);
     setNarrative("");
     setProvider(undefined);
+    setStage("");
+    setEvidence([]);
+    setComputedInsights([]);
+    setWarnings([]);
     try {
       await runAnalysis(id, {
         onStructured: (p) => {
@@ -70,15 +89,24 @@ export default function DashboardPage() {
           setInsights(p.insights);
           setCharts(p.charts);
           setOptions(p.options);
+          if (p.evidence) setEvidence(p.evidence);
+          if (p.computedInsights) setComputedInsights(p.computedInsights);
+          if (p.warnings) setWarnings(p.warnings);
+          if (p.provider) setProvider(p.provider);
         },
+        onStage: (s) => setStage(s),
         onToken: (t) => setNarrative((prev) => prev + t),
-        onDone: (m) => setProvider(m.provider),
+        onDone: (m) => {
+          setProvider(m.provider);
+          setStage("");
+        },
         onError: (m) => setRunError(m),
       });
     } catch (e) {
       setRunError(e instanceof Error ? e.message : "分析失败");
     } finally {
       setStreaming(false);
+      setStage("");
     }
   }, [id]);
 
@@ -149,8 +177,8 @@ export default function DashboardPage() {
       {!hasAnalysis && !streaming && (
         <div className="card">
           <div className="empty">
-            这份数据还没被解读过。点右上角「运行分析」，让 LLM
-            帮你把数字变成图表与洞察～
+            这份数据还没被解读过。点右上角「运行分析」，本地引擎会先算出图表与洞察，
+            可选地再由 LLM 生成自然语言解读～
           </div>
         </div>
       )}
@@ -163,6 +191,10 @@ export default function DashboardPage() {
             narrative={narrative}
             streaming={streaming}
             provider={provider}
+            stage={stage}
+            evidence={evidence}
+            computedInsights={computedInsights}
+            warnings={warnings}
           />
           <div className="grid grid-charts">
             {charts.map((c, i) => (

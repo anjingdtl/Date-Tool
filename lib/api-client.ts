@@ -1,6 +1,8 @@
 import type {
+  AnalysisEvidence,
   AnalysisResult,
   ChartSpec,
+  ComputedInsight,
   DatasetDetail,
   DatasetRow,
   EChartsOption,
@@ -163,7 +165,17 @@ export interface AnalyzeHooks {
     insights: string[];
     charts: ChartSpec[];
     options: EChartsOption[];
+    /** v0.2 阶段 H：本地计算证据(SPEC 10.8) */
+    evidence?: AnalysisEvidence[];
+    /** v0.2 阶段 H：本地确定性洞察(SPEC 10.8) */
+    computedInsights?: ComputedInsight[];
+    /** v0.2 阶段 H：数据警告(SPEC 8.8/10.7) */
+    warnings?: string[];
+    /** v0.2 阶段 H：分析来源(SPEC 12.6) */
+    provider?: "local" | "local+llm";
   }) => void;
+  /** v0.2 阶段 H：分析阶段状态(SPEC 13.2) */
+  onStage?: (stage: string) => void;
   onToken?: (text: string) => void;
   onDone?: (meta: {
     provider: "local" | "local+llm" | "mock" | "llm";
@@ -208,6 +220,9 @@ export async function runAnalysis(
       switch (curEvent) {
         case "result":
           hooks.onStructured?.(payload);
+          break;
+        case "stage":
+          hooks.onStage?.(payload.stage ?? "");
           break;
         case "token":
           hooks.onToken?.(payload.text ?? "");
