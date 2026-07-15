@@ -14,6 +14,7 @@
 import type { ChartSpec, ColumnMeta, DatasetRow, FieldFormat } from "@/lib/types";
 import type { FieldProfile } from "./profile";
 import { computeCategoryStats, profileFields } from "./profile";
+import { resolveAggregation, aggLabel } from "./aggregation";
 import {
   filterValidCharts,
   validateChartSpec,
@@ -31,11 +32,12 @@ function uid(prefix = "chart"): string {
 
 /* ------------------------- 聚合选择 ------------------------- */
 
-/** 根据 metric 的 format 选择聚合方式(SPEC 10.4 / 11.3) */
-export function pickAgg(format: FieldFormat | undefined): "sum" | "avg" {
-  if (format === "percentage") return "avg";
-  // count / currency / integer / decimal 默认 sum
-  return "sum";
+/** 根据 metric 的 format 选择聚合（兼容入口，规则统一委托 resolveAggregation，SPEC 8.4） */
+export function pickAgg(format: FieldFormat | undefined): ReturnType<typeof resolveAggregation> {
+  return resolveAggregation(
+    { name: "", type: "number", sampleValues: [], format } as ColumnMeta,
+    "chart",
+  );
 }
 
 /* ------------------------- 图表推荐 ------------------------- */
@@ -53,7 +55,7 @@ export function recommendCharts(
   if (timeField) {
     const trendMetrics = metricFields.slice(0, 3);
     for (const m of trendMetrics) {
-      const agg = pickAgg(m.format);
+      const agg = resolveAggregation(m, "chart");
       charts.push({
         id: uid(),
         title: `趋势 · ${m.name} 随${timeField.name}变化`,
@@ -61,7 +63,7 @@ export function recommendCharts(
         xField: timeField.name,
         yField: m.name,
         agg,
-        description: `以「${timeField.name}」为横轴,观察「${m.name}」的${agg === "avg" ? "均值" : "累计"}走势。`,
+        description: `以「${timeField.name}」为横轴,观察「${m.name}」的${aggLabel(agg)}走势。`,
       });
     }
   }
@@ -73,7 +75,7 @@ export function recommendCharts(
     if (dimStats.distinctCount >= 2) {
       const dimMetrics = metricFields.slice(0, 2);
       for (const m of dimMetrics) {
-        const agg = pickAgg(m.format);
+        const agg = resolveAggregation(m, "chart");
         charts.push({
           id: uid(),
           title: `对比 · 各${primaryDimension.name}的${m.name}`,
@@ -82,7 +84,7 @@ export function recommendCharts(
           yField: m.name,
           agg,
           limit: 10, // SPEC 11.3 bar 类别超过 10 默认 Top 10
-          description: `按「${primaryDimension.name}」分组,对比各主体的「${m.name}」(Top 10)。`,
+          description: `按「${primaryDimension.name}」分组,对比各主体「${m.name}」的${aggLabel(agg)}值(Top 10)。`,
         });
       }
     }

@@ -1,4 +1,5 @@
 import type { ChartSpec, DatasetRow, EChartsOption } from "./types";
+import { aggregate } from "./analysis/aggregation";
 
 const PALETTE = [
   "#6c8cff",
@@ -36,19 +37,8 @@ function getNumber(row: DatasetRow, field: string): number | null {
 
 function reduce(values: number[], agg: ChartSpec["agg"]): number {
   if (values.length === 0) return 0;
-  switch (agg) {
-    case "count":
-      return values.length;
-    case "avg":
-      return values.reduce((a, b) => a + b, 0) / values.length;
-    case "max":
-      return Math.max(...values);
-    case "min":
-      return Math.min(...values);
-    case "sum":
-    default:
-      return values.reduce((a, b) => a + b, 0);
-  }
+  // 统一委托 aggregation.aggregate（SPEC 8.4），agg 可能为 undefined → 按 sum
+  return aggregate(values, agg ?? "sum");
 }
 
 interface SeriesData {

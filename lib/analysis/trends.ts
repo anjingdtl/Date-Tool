@@ -13,8 +13,9 @@
  * - percentage 用 avg；count/currency 默认 sum。
  */
 
-import type { ColumnMeta, DatasetRow, FieldFormat } from "@/lib/types";
+import type { Aggregation, ColumnMeta, DatasetRow, FieldFormat } from "@/lib/types";
 import { quantile } from "./statistics";
+import { resolveAggregation, aggregate } from "./aggregation";
 
 export type TrendGranularity = "day" | "week" | "month";
 
@@ -30,7 +31,7 @@ export interface TrendPoint {
 export interface MetricTrend {
   field: string;
   granularity: TrendGranularity;
-  agg: "sum" | "avg";
+  agg: Aggregation;
   points: TrendPoint[];
   first: number | null;
   last: number | null;
@@ -108,11 +109,12 @@ function periodLabel(dateStr: string, g: TrendGranularity): string {
   }
 }
 
-/** 根据 metric 的 format 选择聚合方式 */
-export function pickTrendAgg(format: FieldFormat | undefined): "sum" | "avg" {
-  if (format === "percentage") return "avg";
-  // count / currency / integer / decimal 默认 sum
-  return "sum";
+/** 根据 metric 的 format 选择聚合（兼容入口，规则统一委托 resolveAggregation，SPEC 8.4） */
+export function pickTrendAgg(format: FieldFormat | undefined): Aggregation {
+  return resolveAggregation(
+    { name: "", type: "number", sampleValues: [], format } as ColumnMeta,
+    "trend",
+  );
 }
 
 /**
@@ -128,7 +130,7 @@ export function computeMetricTrend(
   timeField: string,
   metric: ColumnMeta,
 ): MetricTrend {
-  const agg = pickTrendAgg(metric.format);
+  const agg = resolveAggregation(metric, "trend");
   const buckets = new Map<string, number[]>();
 
   for (const r of rows) {
@@ -162,7 +164,7 @@ export function computeMetricTrend(
   const sortedPeriods = [...periodMap.keys()].sort();
   const points: TrendPoint[] = sortedPeriods.map((label) => {
     const arr = periodMap.get(label)!;
-    const value = agg === "sum" ? arr.reduce((a, b) => a + b, 0) : arr.reduce((a, b) => a + b, 0) / arr.length;
+    const value = aggregate(arr, agg);
     return { label, value, count: arr.length };
   });
 

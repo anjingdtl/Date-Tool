@@ -11,7 +11,8 @@
  * - 记录聚合方法和样本数。
  */
 
-import type { ColumnMeta, DatasetRow, FieldFormat } from "@/lib/types";
+import type { Aggregation, ColumnMeta, DatasetRow, FieldFormat } from "@/lib/types";
+import { resolveAggregation, aggregate } from "./aggregation";
 
 export interface GroupBucket {
   /** 维度取值(规范化为字符串) */
@@ -25,7 +26,7 @@ export interface GroupBucket {
 export interface GroupComparison {
   metric: string;
   dimension: string;
-  agg: "sum" | "avg";
+  agg: Aggregation;
   buckets: GroupBucket[];
   top10: GroupBucket[];
   sampleSize: number;
@@ -33,12 +34,14 @@ export interface GroupComparison {
   highCardinality: boolean;
 }
 
-/** 根据 metric 的 format 选择聚合方式 */
+/** 根据 metric 的 format 选择聚合（兼容入口，规则统一委托 resolveAggregation，SPEC 8.4） */
 export function pickComparisonAgg(
   format: FieldFormat | undefined,
-): "sum" | "avg" {
-  if (format === "percentage") return "avg";
-  return "sum";
+): Aggregation {
+  return resolveAggregation(
+    { name: "", type: "number", sampleValues: [], format } as ColumnMeta,
+    "group",
+  );
 }
 
 function toKey(v: unknown): string {
@@ -67,7 +70,7 @@ export function computeGroupComparison(
   metric: ColumnMeta,
   distinctCount?: number,
 ): GroupComparison {
-  const agg = pickComparisonAgg(metric.format);
+  const agg = resolveAggregation(metric, "group");
   const groups = new Map<string, number[]>();
 
   for (const r of rows) {
@@ -84,10 +87,7 @@ export function computeGroupComparison(
 
   const buckets: GroupBucket[] = [];
   for (const [label, arr] of groups) {
-    const value =
-      agg === "sum"
-        ? arr.reduce((a, b) => a + b, 0)
-        : arr.reduce((a, b) => a + b, 0) / arr.length;
+    const value = aggregate(arr, agg);
     buckets.push({ label, value, count: arr.length });
   }
 
