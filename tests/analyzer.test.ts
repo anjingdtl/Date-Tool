@@ -4,7 +4,7 @@
  * 阶段 G4:覆盖 analyzeDataset 的 LLM 禁用/启用/超时回退/renamedChartTitles 路径。
  *
  * mock 策略:
- * - vi.mock("@/lib/config") 控制 config.llm.enabled;
+ * - vi.mock("@/lib/llm-config") 控制 getActiveLLMConfig().enabled（SPEC 6 单一入口）;
  * - vi.mock("@/lib/llm") 控制 chatJSON 返回值或抛错。
  */
 
@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 /**
  * 用 vi.hoisted 提升共享状态,使 mock 工厂能引用。
- * - enabled: 控制 config.llm.enabled;
+ * - enabled: 控制 getActiveLLMConfig().enabled;
  * - shouldThrow: chatJSON 是否抛错(模拟超时);
  * - response: chatJSON 默认返回值;
  * - capturedCharts: 在 onStructured 时捕获本地 charts,用于动态构造 renamedChartTitles。
@@ -26,17 +26,8 @@ const state = vi.hoisted(() => ({
   capturedCharts: [] as Array<{ id: string; title: string }>,
 }));
 
-vi.mock("@/lib/config", () => ({
-  config: {
-    llm: {
-      get enabled() {
-        return state.enabled;
-      },
-      baseUrl: "https://example.com/v1",
-      apiKey: "test-key",
-      model: "test-model",
-    },
-  },
+vi.mock("@/lib/llm-config", () => ({
+  getActiveLLMConfig: vi.fn(),
 }));
 
 vi.mock("@/lib/llm", () => ({
@@ -46,6 +37,7 @@ vi.mock("@/lib/llm", () => ({
 
 import { analyzeDataset } from "@/lib/analyzer";
 import { chatJSON } from "@/lib/llm";
+import { getActiveLLMConfig } from "@/lib/llm-config";
 import type { ColumnMeta, DatasetRow, StoredDataset } from "@/lib/types";
 
 /* ------------------------- 夹具 ------------------------- */
@@ -144,6 +136,17 @@ beforeEach(() => {
   state.shouldThrow = false;
   state.response = null;
   state.capturedCharts = [];
+  // 统一运行时 LLM 配置入口：enabled 由 state 决定（替代旧 config.llm.enabled）
+  // 用 mockImplementation 实时读 state.enabled，保证内层 describe 的 beforeEach
+  // 修改 state 后，analyzer 调用拿到最新值（与旧 config getter 行为一致）
+  vi.mocked(getActiveLLMConfig).mockReset();
+  vi.mocked(getActiveLLMConfig).mockImplementation(async () => ({
+    provider: "test",
+    baseUrl: "https://example.com/v1",
+    apiKey: state.enabled ? "test-key" : "",
+    model: "test-model",
+    enabled: state.enabled,
+  }));
   // 每个测试前重置 chatJSON 为默认实现:按 state 决定抛错或返回 response
   vi.mocked(chatJSON).mockReset();
   vi.mocked(chatJSON).mockImplementation(async () => {

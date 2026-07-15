@@ -116,6 +116,11 @@ export async function writeSettings(
   return next;
 }
 
+/** 仅供测试：清除 mtime 缓存，确保每个用例读取最新盘上内容与当前 env */
+export function __resetSettingsCacheForTests(): void {
+  cache = null;
+}
+
 /** 隐藏 API Key 后六位之前的部分，用于在前端展示"已配置"标识 */
 export function maskApiKey(key: string): string {
   if (!key) return "";

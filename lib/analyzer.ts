@@ -13,10 +13,10 @@
  * 旧 mock 逻辑保留为本地兜底,不再单独走 mock 分支。
  */
 
-import { config } from "./config";
 import { buildChartOption } from "./chart";
 import { chatJSON, streamChat } from "./llm";
 import { logger } from "./logger";
+import { getActiveLLMConfig } from "./llm-config";
 import {
   buildLLMInput,
   SYSTEM_PROMPT,
@@ -124,6 +124,15 @@ export async function analyzeDataset(
 ): Promise<AnalysisResult> {
   const createdAt = new Date().toISOString();
 
+  /* —— 0. 解析运行时 LLM 配置(SPEC 6 单一事实来源) —— */
+  const llmConfig = await getActiveLLMConfig();
+  logger.info("llm_config_resolved", {
+    requestId,
+    provider: llmConfig.provider,
+    model: llmConfig.model,
+    enabled: llmConfig.enabled,
+  });
+
   /* —— 1. 本地确定性计算(SPEC 10) —— */
   hooks.onStage?.("正在计算数据质量与统计结果");
   const local = runLocalAnalysis(ds);
@@ -169,7 +178,7 @@ export async function analyzeDataset(
   });
 
   /* —— 3. 若未启用 LLM,直接返回本地结果(仍流式推送 narrative) —— */
-  if (!config.llm.enabled) {
+  if (!llmConfig.enabled) {
     const narrative = localNarrative(ds, insights);
     for (const ch of chunkText(narrative, 20)) {
       hooks.onNarrativeToken(ch);

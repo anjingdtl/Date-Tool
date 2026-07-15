@@ -6,6 +6,7 @@ import {
   readSettings,
   writeSettings,
 } from "@/lib/settings";
+import { getActiveLLMConfig } from "@/lib/llm-config";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -66,20 +67,20 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-/** POST /api/settings/test —— 测试 LLM 连通性（不写盘） */
+/** POST /api/settings/test —— 测试 LLM 连通性（不写盘），使用统一配置入口 */
 export async function POST(req: NextRequest) {
   try {
-    const s = await readSettings();
-    if (!s.llm.apiKey) {
+    const c = await getActiveLLMConfig();
+    if (!c.enabled) {
       return ok({
         ok: false,
-        message: "未配置 API Key，已使用本地 Mock 模式",
+        message: "未配置 API Key，当前为本地模式（local）",
       });
     }
-    if (!s.llm.baseUrl) {
+    if (!c.baseUrl) {
       return ok({ ok: false, message: "未配置 Base URL" });
     }
-    const url = s.llm.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+    const url = c.baseUrl.replace(/\/+$/, "") + "/chat/completions";
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12_000);
     try {
@@ -87,10 +88,10 @@ export async function POST(req: NextRequest) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${s.llm.apiKey}`,
+          Authorization: `Bearer ${c.apiKey}`,
         },
         body: JSON.stringify({
-          model: s.llm.model,
+          model: c.model,
           messages: [{ role: "user", content: "ping" }],
           max_tokens: 1,
         }),

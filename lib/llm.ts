@@ -1,5 +1,4 @@
-import { config } from "./config";
-import { readSettings } from "./settings";
+import { getActiveLLMConfig } from "./llm-config";
 import { logger } from "./logger";
 
 interface ChatMessage {
@@ -7,25 +6,10 @@ interface ChatMessage {
   content: string;
 }
 
-/** 取当前生效的 LLM 配置：先看运行时 settings，再回退到 env。热更新支持。 */
+/** 取当前生效的 LLM 配置（SPEC 6 统一入口：settings → env → 默认）。热更新支持。 */
 async function activeLLM(): Promise<{ baseUrl: string; apiKey: string; model: string }> {
-  try {
-    const s = await readSettings();
-    if (s.llm.baseUrl && s.llm.apiKey) {
-      return {
-        baseUrl: s.llm.baseUrl,
-        apiKey: s.llm.apiKey,
-        model: s.llm.model,
-      };
-    }
-  } catch {
-    /* 读盘失败 → 用 env 兜底 */
-  }
-  return {
-    baseUrl: config.llm.baseUrl,
-    apiKey: config.llm.apiKey,
-    model: config.llm.model,
-  };
+  const c = await getActiveLLMConfig();
+  return { baseUrl: c.baseUrl, apiKey: c.apiKey, model: c.model };
 }
 
 function endpoint(base: string, path: string): string {
