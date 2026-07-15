@@ -3,7 +3,6 @@ import { analyzeDataset } from "@/lib/analyzer";
 import { getDataset, updateAnalysis, isValidDatasetId } from "@/lib/store";
 import { newRequestId } from "@/lib/respond";
 import { logger } from "@/lib/logger";
-import type { ChartSpec, EChartsOption } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,13 +52,12 @@ export async function POST(req: NextRequest) {
         }
 
         const result = await analyzeDataset(ds, requestId, {
-          onStructured: (p: {
-            summary: string;
-            insights: string[];
-            charts: ChartSpec[];
-            options: EChartsOption[];
-          }) => send("result", p),
+          // SPEC 12.4: onStructured 透传 evidence/computedInsights/warnings/provider
+          // 类型由 AnalyzeHooks.onStructured 自动推断,无需手动标注
+          onStructured: (p) => send("result", p),
           onNarrativeToken: (token: string) => send("token", { text: token }),
+          // SPEC 13.2: 分析阶段状态
+          onStage: (stage: string) => send("stage", { stage }),
         });
 
         await updateAnalysis(datasetId, result);
