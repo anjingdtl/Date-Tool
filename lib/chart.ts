@@ -97,6 +97,17 @@ function computeSeries(spec: ChartSpec, rows: DatasetRow[]): SeriesData {
     categories.sort((a, b) => (totals.get(b) ?? 0) - (totals.get(a) ?? 0));
   }
 
+  // v0.2 阶段 F:TopN 截断(SPEC 11.3 bar 类别超过 10 默认只显示 Top 10)
+  // line 图不截断(时间序列需完整),table 图不截断(已在 limit 控制),pie/bar 按 limit
+  if (
+    spec.limit &&
+    spec.limit > 0 &&
+    (spec.type === "bar" || spec.type === "pie") &&
+    categories.length > spec.limit
+  ) {
+    categories = categories.slice(0, spec.limit);
+  }
+
   const matrix = seriesNames.map((g) =>
     categories.map((x) => reduce(groups.get(g)!.get(x) ?? [], spec.agg)),
   );

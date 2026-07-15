@@ -18,6 +18,7 @@
 
 import type {
   AnalysisEvidence,
+  ChartSpec,
   ColumnMeta,
   ComputedInsight,
   DatasetRow,
@@ -51,6 +52,7 @@ import {
   topBottomEvidence,
   trendEvidence,
 } from "./evidence";
+import { recommendAndValidate, type SemanticIssue } from "./recommend-charts";
 
 /* ------------------------- 状态分析(SPEC 10.6) ------------------------- */
 
@@ -152,6 +154,10 @@ export interface LocalAnalysis {
   statusAnalyses: StatusAnalysis[];
   evidence: AnalysisEvidence[];
   insights: ComputedInsight[];
+  /** v0.2 阶段 F:本地推荐 + 语义校验后的 ChartSpec */
+  charts: ChartSpec[];
+  /** 图表校验问题(用于调试/日志,不阻断分析) */
+  chartIssues: SemanticIssue[];
 }
 
 function insightId(prefix: string): string {
@@ -452,6 +458,14 @@ export function runLocalAnalysis(ds: StoredDataset): LocalAnalysis {
     }
   }
 
+  /* —— 7. 本地图表推荐 + 语义校验(SPEC 11) —— */
+  const maxCharts = ds.config?.maxCharts ?? 8;
+  const { charts, issues: chartIssues } = recommendAndValidate(
+    rows,
+    columns,
+    maxCharts,
+  );
+
   return {
     profile,
     numericStats,
@@ -461,6 +475,8 @@ export function runLocalAnalysis(ds: StoredDataset): LocalAnalysis {
     statusAnalyses,
     evidence,
     insights,
+    charts,
+    chartIssues,
   };
 }
 

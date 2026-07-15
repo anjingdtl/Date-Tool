@@ -1,8 +1,10 @@
 import { z } from "zod";
 
 /**
- * ChartSpec 严格校验（spec 11.4）
- * agg 设为可选以兼容现有数据；阶段 F 语义校验时会补默认值。
+ * ChartSpec 严格校验（SPEC 11.4）。
+ *
+ * v0.2 阶段 F：agg 设为必填,因为本地推荐引擎(recommend-charts.ts)
+ * 总会根据 metric format 决定聚合方式,不再依赖默认值。
  */
 export const ChartSpecSchema = z.object({
   id: z.string().min(1),
@@ -11,7 +13,7 @@ export const ChartSpecSchema = z.object({
   xField: z.string().min(1),
   yField: z.string().min(1),
   groupBy: z.string().optional(),
-  agg: z.enum(["sum", "avg", "count", "max", "min"]).optional(),
+  agg: z.enum(["sum", "avg", "count", "max", "min"]),
   description: z.string().max(300).optional(),
   evidenceId: z.string().optional(),
   limit: z.number().int().min(1).max(50).optional(),
