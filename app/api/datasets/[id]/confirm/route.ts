@@ -1,25 +1,32 @@
 import { NextRequest } from "next/server";
-import { getDataset, isValidDatasetId, setDatasetStatus } from "@/lib/store";
+import {
+  getDataset,
+  isValidDatasetId,
+  reconfigureAndConfirm,
+} from "@/lib/store";
 import {
   FieldConfigUpdateSchema,
   hasBlockingIssues,
   validateFieldConfig,
+  type FieldConfigUpdate,
 } from "@/lib/schemas/dataset";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
 import { fail, newRequestId, ok } from "@/lib/respond";
+import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
  * POST /api/datasets/{id}/confirm
- * 将 draft → ready（SPEC 17.4）。
+ * 将 draft → ready，并按最终字段配置重新规范化数据（SPEC 7.4 / 23.2）。
  *
  * 1. 当前状态必须是 draft（非 draft 不允许 confirm，避免覆盖已分析数据集）；
- * 2. 对当前 columns 跑一次 SPEC 9.7 校验，阻断错误禁止 confirm；
- * 3. 状态置为 ready，允许后续 analyze。
+ * 2. 校验最终字段配置（阻断错误禁止 confirm）；
+ * 3. 按最终 columns 重新规范化 rows + 重算字段元数据 + 重算数据质量报告；
+ * 4. 原子保存并置 status=ready。
  *
- * 可选：请求体可携带最终字段配置，先保存再 confirm（一次请求完成）。
+ * 请求体可携带最终字段配置（一次请求完成保存 + confirm）。
  */
 export async function POST(
   req: NextRequest,
@@ -39,7 +46,9 @@ export async function POST(
       );
     }
 
-    // 可选请求体：再次提交字段配置
+    // 可选请求体：最终字段配置
+    let submittedColumns: FieldConfigUpdate["columns"] | undefined;
+    let analysisConfig: FieldConfigUpdate["analysisConfig"] | undefined;
     let body: unknown = null;
     try {
       body = await req.json();
@@ -56,40 +65,17 @@ export async function POST(
       if (hasBlockingIssues(issues)) {
         throw new BadRequestError("字段配置存在阻断错误，无法 confirm", issues);
       }
-      // 复用 config 路由的落盘逻辑：动态导入避免循环依赖
-      const { updateDatasetConfig } = await import("@/lib/store");
-      await updateDatasetConfig(
-        params.id,
-        parsed.data.columns,
-        parsed.data.analysisConfig,
-      );
+      submittedColumns = parsed.data.columns;
+      analysisConfig = parsed.data.analysisConfig;
     } else {
-      // 没有 body：用现有 columns 自检
+      // 无 body：用现有 columns 自检阻断错误
       const cols = existing.columns.map((c) => ({
         name: c.name,
         type: c.type,
-        role: (c.role ?? "dimension") as
-          | "time"
-          | "metric"
-          | "dimension"
-          | "status"
-          | "identifier"
-          | "ignored",
-        format: (c.format ?? "plain") as
-          | "plain"
-          | "integer"
-          | "decimal"
-          | "percentage"
-          | "currency"
-          | "duration"
-          | "date"
-          | "datetime",
-        defaultAggregation: (c.defaultAggregation ?? "count") as
-          | "sum"
-          | "avg"
-          | "count"
-          | "max"
-          | "min",
+        role: (c.role ?? "dimension") as FieldConfigUpdate["columns"][number]["role"],
+        format: (c.format ?? "plain") as FieldConfigUpdate["columns"][number]["format"],
+        defaultAggregation: (c.defaultAggregation ??
+          "count") as FieldConfigUpdate["columns"][number]["defaultAggregation"],
         includeInAnalysis: c.includeInAnalysis ?? true,
       }));
       const issues = validateFieldConfig({ columns: cols });
@@ -101,8 +87,32 @@ export async function POST(
       }
     }
 
-    const updated = await setDatasetStatus(params.id, "ready");
+    const updated = await reconfigureAndConfirm(
+      params.id,
+      submittedColumns,
+      analysisConfig,
+    );
     if (!updated) throw new NotFoundError("数据集不存在");
+
+    if (submittedColumns) {
+      logger.info("dataset_reconfigured", {
+        requestId,
+        datasetId: params.id,
+        columnCount: submittedColumns.length,
+      });
+    }
+    logger.info("dataset_confirmed", {
+      requestId,
+      datasetId: params.id,
+      status: updated.status,
+      columnCount: updated.columns.length,
+    });
+    logger.info("dataset_normalized", {
+      requestId,
+      datasetId: params.id,
+      rowCount: updated.rows.length,
+      qualityWarnings: updated.quality?.warnings.length ?? 0,
+    });
 
     return ok({
       id: updated.id,

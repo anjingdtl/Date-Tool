@@ -5,16 +5,17 @@ import type {
   ColumnMeta,
   ColumnType,
   DataQualityReport,
-  DataQualityWarning,
   DatasetRow,
   FieldFormat,
   FieldRole,
 } from "./types";
 import {
   cleanColumnNames,
+  normalizeRowsByColumns,
   parseDateValue,
   parseNumberValue,
 } from "./normalize";
+import { generateDataQuality } from "./quality";
 
 const MAX_STORED_ROWS = 50000;
 const SAMPLE_SIZE = 500;
@@ -218,163 +219,9 @@ function buildColumns(
   return out;
 }
 
-/**
- * 根据推断的列类型规范化行值：
- * - number 列：解析为 number（千分位/百分比/金额）
- * - date 列：解析为 ISO 8601 字符串
- * - boolean 列：转 true/false
- * - 其余原样保留
- */
-function normalizeRows(
-  rows: DatasetRow[],
-  columns: ColumnMeta[],
-): DatasetRow[] {
-  const numCols = new Set(
-    columns.filter((c) => c.type === "number").map((c) => c.name),
-  );
-  const dateCols = new Set(
-    columns.filter((c) => c.type === "date").map((c) => c.name),
-  );
-  const boolCols = new Set(
-    columns.filter((c) => c.type === "boolean").map((c) => c.name),
-  );
-  return rows.map((row) => {
-    const out: DatasetRow = {};
-    for (const [k, v] of Object.entries(row)) {
-      if (numCols.has(k)) {
-        if (v === null || v === undefined || v === "") {
-          out[k] = null;
-        } else if (typeof v === "number") {
-          out[k] = v;
-        } else {
-          out[k] = parseNumberValue(v).value;
-        }
-      } else if (dateCols.has(k)) {
-        if (v === null || v === undefined || v === "") {
-          out[k] = null;
-        } else if (v instanceof Date) {
-          out[k] = parseDateValue(v);
-        } else {
-          out[k] = parseDateValue(v);
-        }
-      } else if (boolCols.has(k)) {
-        if (v === true || v === "true") out[k] = true;
-        else if (v === false || v === "false") out[k] = false;
-        else out[k] = v;
-      } else {
-        out[k] = v;
-      }
-    }
-    return out;
-  });
-}
+/* 行规范化已提取到 lib/normalize.ts::normalizeRowsByColumns（与 confirm 阶段共用，SPEC 7.2） */
 
-/* ----------------------------- 质量报告 ----------------------------- */
-
-function generateQualityReport(
-  rows: DatasetRow[],
-  columns: ColumnMeta[],
-  originalRowCount: number,
-  storedRowCount: number,
-  truncated: boolean,
-  duplicateRenamed: boolean,
-): DataQualityReport {
-  const warnings: DataQualityWarning[] = [];
-
-  if (truncated) {
-    warnings.push({
-      code: "TRUNCATED",
-      level: "warning",
-      message: `数据超过 ${MAX_STORED_ROWS} 行上限，仅保留前 ${storedRowCount} 行进行分析（共 ${originalRowCount} 行）。`,
-    });
-  }
-
-  if (duplicateRenamed) {
-    warnings.push({
-      code: "DUPLICATE_COLUMN_NAME",
-      level: "warning",
-      message: "存在重名列，已自动加后缀（_2、_3…）以区分。",
-    });
-  }
-
-  // 列级警告
-  for (const c of columns) {
-    if (c.nullCount && rows.length > 0 && c.nullRate! >= 1) {
-      warnings.push({
-        code: "EMPTY_COLUMN",
-        level: "error",
-        field: c.name,
-        message: `列「${c.name}」全部为空。`,
-      });
-    } else if (c.nullRate && c.nullRate > 0.3) {
-      warnings.push({
-        code: "HIGH_NULL_RATE",
-        level: "warning",
-        field: c.name,
-        message: `列「${c.name}」空值率 ${(c.nullRate * 100).toFixed(0)}%，可能影响分析。`,
-      });
-    }
-    if (c.type !== "string" && c.confidence !== undefined && c.confidence < 0.8) {
-      warnings.push({
-        code: "MIXED_TYPE",
-        level: "info",
-        field: c.name,
-        message: `列「${c.name}」类型推断置信度 ${(c.confidence * 100).toFixed(0)}%，存在混合类型。`,
-      });
-    }
-    if (c.type === "string" && c.distinctCount! > 50 && c.distinctCount! < rows.length) {
-      warnings.push({
-        code: "HIGH_CARDINALITY",
-        level: "info",
-        field: c.name,
-        message: `列「${c.name}」取值 ${c.distinctCount} 类，基数较高。`,
-      });
-    }
-    if (rows.length > 10 && c.distinctCount === rows.length && c.role !== "identifier") {
-      warnings.push({
-        code: "POSSIBLE_IDENTIFIER",
-        level: "info",
-        field: c.name,
-        message: `列「${c.name}」每行取值唯一，可能是标识字段。`,
-      });
-    }
-  }
-
-  // 重复行 / 空行
-  const seen = new Set<string>();
-  let duplicateRowCount = 0;
-  let emptyRowCount = 0;
-  for (const row of rows) {
-    const vals = Object.values(row);
-    const allEmpty = vals.every(
-      (v) => v === null || v === undefined || v === "",
-    );
-    if (allEmpty) {
-      emptyRowCount++;
-      continue;
-    }
-    const key = JSON.stringify(row);
-    if (seen.has(key)) duplicateRowCount++;
-    else seen.add(key);
-  }
-  if (duplicateRowCount > 0) {
-    warnings.push({
-      code: "DUPLICATE_ROWS",
-      level: "warning",
-      message: `检测到 ${duplicateRowCount} 行完全重复。`,
-    });
-  }
-
-  return {
-    originalRowCount,
-    storedRowCount,
-    columnCount: columns.length,
-    duplicateRowCount,
-    emptyRowCount,
-    warnings,
-    generatedAt: new Date().toISOString(),
-  };
-}
+/* 质量报告已提取到 lib/quality.ts::generateDataQuality（与 confirm 阶段共用，SPEC 7.6 / 24） */
 
 /* ----------------------------- 解析入口 ----------------------------- */
 
@@ -468,17 +315,20 @@ export function parseBuffer(buffer: Buffer, fileName: string): ParsedData {
   // 推断列元数据
   const columns = buildColumns(rows, rawNames, cleanedNames);
 
-  // 规范化行值（数字/日期/布尔）
-  rows = normalizeRows(rows, columns);
+  // 规范化行值（数字/日期/布尔），收集无法解析的计数供质量报告使用
+  const norm = normalizeRowsByColumns(rows, columns);
+  rows = norm.rows;
 
-  const quality = generateQualityReport(
+  const quality = generateDataQuality({
     rows,
     columns,
     originalRowCount,
     storedRowCount,
     truncated,
     duplicateRenamed,
-  );
+    invalidNumberCounts: norm.invalidNumberCounts,
+    invalidDateCounts: norm.invalidDateCounts,
+  });
 
   return {
     source,

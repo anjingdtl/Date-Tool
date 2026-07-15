@@ -24,5 +24,9 @@ export default defineConfig({
     environmentMatchGlobs: [
       ["tests/**/*.dom.test.tsx", "jsdom"],
     ],
+    // 测试共享同一个临时 DATA_DIR，部分用例会清理 datasets/ 目录。
+    // 文件并行会在 saveJsonAtomic 的 rename 阶段产生竞态（ENOENT），
+    // 因此强制串行执行，保证文件系统状态隔离。
+    fileParallelism: false,
   },
 });

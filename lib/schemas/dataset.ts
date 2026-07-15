@@ -67,6 +67,7 @@ export const DataQualityWarningSchema = z.object({
     "MIXED_TYPE",
     "DUPLICATE_ROWS",
     "INVALID_DATE",
+    "INVALID_NUMBER",
     "POSSIBLE_IDENTIFIER",
     "HIGH_CARDINALITY",
     "EMPTY_COLUMN",

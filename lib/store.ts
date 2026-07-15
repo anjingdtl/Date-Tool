@@ -15,6 +15,8 @@ import type {
   PublicDataset,
   StoredDataset,
 } from "./types";
+import { normalizeRowsByColumns, recomputeColumnStats } from "./normalize";
+import { generateDataQuality } from "./quality";
 
 // re-export 保持向后兼容（其它模块从 @/lib/store 导入）
 export { DatasetIdSchema, isValidDatasetId };
@@ -336,33 +338,29 @@ export async function updateAnalysis(
   await saveDataset(ds);
 }
 
-/**
- * 更新数据集字段配置与分析配置（预检阶段，SPEC 9.7 / 17.3）。
- *
- * - 只覆盖 columns 中存在的字段的 role/format/defaultAggregation/includeInAnalysis/type/userModified；
- * - 保留其它元数据（name/originalName/sampleValues/nullCount/...）；
- * - 同步更新 analysisConfig；
- * - 不修改 rows（用户改类型后，规范化在阶段 E 重新跑）。
- *
- * 调用方应先通过 validateFieldConfig 校验。
- */
-export async function updateDatasetConfig(
-  id: string,
-  columns: Array<{
-    name: string;
-    type: ColumnMeta["type"];
-    role: ColumnMeta["role"];
-    format: ColumnMeta["format"];
-    defaultAggregation: ColumnMeta["defaultAggregation"];
-    includeInAnalysis: boolean;
-  }>,
-  analysisConfig?: DatasetAnalysisConfig,
-): Promise<StoredDataset | null> {
-  const ds = await getDataset(id);
-  if (!ds) return null;
+/** 字段配置更新项（预检阶段用户可修改的字段） */
+export interface ColumnConfigUpdate {
+  name: string;
+  type: ColumnMeta["type"];
+  role: ColumnMeta["role"];
+  format: ColumnMeta["format"];
+  defaultAggregation: ColumnMeta["defaultAggregation"];
+  includeInAnalysis: boolean;
+}
 
-  const byName = new Map(columns.map((c) => [c.name, c]));
-  ds.columns = ds.columns.map((c) => {
+/**
+ * 把用户提交的字段配置合并进现有 columns（纯函数，SPEC 9.7 / 17.3）。
+ *
+ * - 只覆盖 type/role/format/defaultAggregation/includeInAnalysis；
+ * - 任一字段变化则标记 userModified=true；
+ * - 保留 name/originalName/sampleValues/nullCount 等其它元数据。
+ */
+export function mergeColumnsInto(
+  existing: ColumnMeta[],
+  updates: ColumnConfigUpdate[],
+): ColumnMeta[] {
+  const byName = new Map(updates.map((c) => [c.name, c]));
+  return existing.map((c) => {
     const upd = byName.get(c.name);
     if (!upd) return c;
     const changed =
@@ -381,8 +379,77 @@ export async function updateDatasetConfig(
       userModified: changed ? true : c.userModified,
     };
   });
+}
 
+/**
+ * 更新数据集字段配置（预检草稿，SPEC 17.3 / 23.3）。
+ *
+ * 仅落盘 columns + analysisConfig，**不修改 rows**：用户在预检页可能多次调整，
+ * 避免每次保存都反复处理大数据。rows 的重规范化统一在 confirm 时执行。
+ *
+ * 调用方应先通过 validateFieldConfig 校验。
+ */
+export async function updateDatasetConfig(
+  id: string,
+  columns: ColumnConfigUpdate[],
+  analysisConfig?: DatasetAnalysisConfig,
+): Promise<StoredDataset | null> {
+  const ds = await getDataset(id);
+  if (!ds) return null;
+  ds.columns = mergeColumnsInto(ds.columns, columns);
   if (analysisConfig) ds.config = analysisConfig;
+  await saveDataset(ds);
+  return ds;
+}
+
+/**
+ * confirm 专用：按最终字段配置重新规范化并落盘（SPEC 7.4 / 23.2）。
+ *
+ * 流程：合并最终 columns → 按最终类型/格式重新规范化 rows → 重算字段元数据
+ *      → 重算数据质量报告 → 原子保存 rows + meta + quality → status=ready。
+ *
+ * Evidence 与后续分析都基于这份稳定的最终快照，避免每次分析重复转换（SPEC 21）。
+ */
+export async function reconfigureAndConfirm(
+  id: string,
+  columns?: ColumnConfigUpdate[],
+  analysisConfig?: DatasetAnalysisConfig,
+): Promise<StoredDataset | null> {
+  const ds = await getDataset(id);
+  if (!ds) return null;
+
+  // 1. 合并最终字段配置（若有提交）
+  let finalColumns = ds.columns;
+  if (columns && columns.length > 0) {
+    finalColumns = mergeColumnsInto(ds.columns, columns);
+  }
+
+  // 2. 按最终 columns 重新规范化 rows
+  const norm = normalizeRowsByColumns(ds.rows, finalColumns);
+
+  // 3. 重算字段元数据（nullCount/distinctCount/sampleValues/...）
+  finalColumns = recomputeColumnStats(norm.rows, finalColumns);
+
+  // 4. 重算数据质量报告
+  const originalRowCount = ds.originalRowCount ?? ds.rows.length;
+  const storedRowCount = ds.storedRowCount ?? norm.rows.length;
+  const quality = generateDataQuality({
+    rows: norm.rows,
+    columns: finalColumns,
+    originalRowCount,
+    storedRowCount,
+    truncated: originalRowCount > storedRowCount,
+    duplicateRenamed: false,
+    invalidNumberCounts: norm.invalidNumberCounts,
+    invalidDateCounts: norm.invalidDateCounts,
+  });
+
+  // 5. 原子保存，状态置 ready
+  ds.columns = finalColumns;
+  ds.rows = norm.rows;
+  ds.quality = quality;
+  if (analysisConfig) ds.config = analysisConfig;
+  ds.status = "ready";
   await saveDataset(ds);
   return ds;
 }

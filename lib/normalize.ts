@@ -7,7 +7,7 @@
  *
  * 全部为纯函数，无副作用，便于单元测试。
  */
-import type { FieldFormat } from "./types";
+import type { ColumnMeta, DatasetRow, FieldFormat } from "./types";
 
 export interface NumberParseResult {
   value: number | null;
@@ -115,7 +115,14 @@ function validYmd(y: number, mo: number, d: number): boolean {
   if (mo < 1 || mo > 12) return false;
   if (d < 1 || d > 31) return false;
   if (y < 1900 || y > 2100) return false;
-  return true;
+  // 真实日历校验（SPEC 11.4）：用 UTC 构造后回查三个分量，
+  // 拒绝 2026-02-31 这类语法合法但日历不存在的溢出日期。
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === mo - 1 &&
+    dt.getUTCDate() === d
+  );
 }
 
 /**
@@ -141,4 +148,149 @@ export function cleanColumnNames(
     names.push(n);
   }
   return { names, duplicateRenamed };
+}
+
+/* ----------------------------- 行规范化（可复用，SPEC 7.2） ----------------------------- */
+
+export interface NormalizeRowsResult {
+  rows: DatasetRow[];
+  /** 每列无法解析为数字的非空原始值数量 */
+  invalidNumberCounts: Record<string, number>;
+  /** 每列无法解析为日期的非空原始值数量 */
+  invalidDateCounts: Record<string, number>;
+  /** 每列值因规范化发生改变的计数 */
+  changedValueCounts: Record<string, number>;
+}
+
+const BOOL_TRUE = new Set(["true", "是", "1", "yes", "y", "t"]);
+const BOOL_FALSE = new Set(["false", "否", "0", "no", "n", "f"]);
+
+function toBoolean(v: unknown): boolean | null {
+  if (typeof v === "boolean") return v;
+  if (v === null || v === undefined || v === "") return null;
+  const s = String(v).trim().toLowerCase();
+  if (BOOL_TRUE.has(s)) return true;
+  if (BOOL_FALSE.has(s)) return false;
+  return null;
+}
+
+/**
+ * 按最终字段配置（columns）重新规范化行值（SPEC 7.2 / 7.3）。
+ *
+ * - number 列：parseNumberValue，无法解析设 null 并记 invalidNumberCounts；
+ * - date 列：parseDateValue（真实日历校验），无法解析设 null 并记 invalidDateCounts；
+ * - boolean 列：支持 true/false/是/否/1/0，无法识别设 null；
+ * - string 列：null→null，数字/布尔→字符串，字符串原样（不丢前导零标识字段）；
+ * - ignored/未知列：原样保留。
+ *
+ * 纯函数，parse 阶段与 confirm 阶段复用，确保 rows 与最终 columns 一致。
+ */
+export function normalizeRowsByColumns(
+  rows: DatasetRow[],
+  columns: ColumnMeta[],
+): NormalizeRowsResult {
+  const colByName = new Map(columns.map((c) => [c.name, c]));
+  const invalidNumberCounts: Record<string, number> = {};
+  const invalidDateCounts: Record<string, number> = {};
+  const changedValueCounts: Record<string, number> = {};
+
+  const out = rows.map((row) => {
+    const o: DatasetRow = {};
+    for (const [k, v] of Object.entries(row)) {
+      const type = colByName.get(k)?.type;
+      if (type === "number") {
+        if (v === null || v === undefined || v === "") {
+          o[k] = null;
+        } else if (typeof v === "number") {
+          if (Number.isFinite(v)) {
+            o[k] = v;
+          } else {
+            o[k] = null;
+            invalidNumberCounts[k] = (invalidNumberCounts[k] ?? 0) + 1;
+          }
+        } else {
+          const np = parseNumberValue(v);
+          if (np.value !== null) {
+            if (String(np.value) !== String(v).trim()) {
+              changedValueCounts[k] = (changedValueCounts[k] ?? 0) + 1;
+            }
+            o[k] = np.value;
+          } else {
+            o[k] = null;
+            invalidNumberCounts[k] = (invalidNumberCounts[k] ?? 0) + 1;
+          }
+        }
+      } else if (type === "date") {
+        if (v === null || v === undefined || v === "") {
+          o[k] = null;
+        } else {
+          const dp = parseDateValue(v);
+          if (dp) {
+            o[k] = dp;
+          } else {
+            o[k] = null;
+            invalidDateCounts[k] = (invalidDateCounts[k] ?? 0) + 1;
+          }
+        }
+      } else if (type === "boolean") {
+        if (v === null || v === undefined || v === "") {
+          o[k] = null;
+        } else {
+          // 无法识别的布尔值统一设 null（SPEC 7.3）
+          o[k] = toBoolean(v);
+        }
+      } else if (type === "string") {
+        if (v === null || v === undefined) {
+          o[k] = null;
+        } else if (typeof v === "number" || typeof v === "boolean") {
+          o[k] = String(v);
+        } else {
+          // 字符串原样保留（含前导零的标识字段不丢失）
+          o[k] = v;
+        }
+      } else {
+        // ignored 或未知列：原样保留
+        o[k] = v;
+      }
+    }
+    return o;
+  });
+
+  return { rows: out, invalidNumberCounts, invalidDateCounts, changedValueCounts };
+}
+
+/**
+ * 基于已规范化的 rows 重算字段元数据（SPEC 7.5）。
+ *
+ * 更新 nullCount / nullRate / distinctCount / sampleValues / nullable；
+ * confidence 与 userModified 保留原值（用户确认前的推断结果不因重算丢失）。
+ */
+export function recomputeColumnStats(
+  rows: DatasetRow[],
+  columns: ColumnMeta[],
+): ColumnMeta[] {
+  const total = rows.length || 1;
+  return columns.map((c) => {
+    let nullCount = 0;
+    const distinctSet = new Set<string>();
+    const sampleValues: unknown[] = [];
+    for (const row of rows) {
+      const v = row[c.name];
+      const isNull = v === null || v === undefined || v === "";
+      if (isNull) {
+        nullCount++;
+        continue;
+      }
+      distinctSet.add(typeof v === "object" ? JSON.stringify(v) : String(v));
+      if (sampleValues.length < 5) sampleValues.push(v);
+    }
+    return {
+      ...c,
+      nullCount,
+      nullRate: nullCount / total,
+      distinctCount: distinctSet.size,
+      sampleValues,
+      nullable: nullCount > 0,
+    };
+  });
 }
