@@ -15,6 +15,14 @@ const METHOD_LABEL: Record<AnalysisEvidence["method"], string> = {
   missingness: "缺失分析",
   outlier: "异常值检测",
   change_rate: "变化率",
+  // v0.3 工具注册表新增（SPEC 13.4）
+  aggregate: "聚合",
+  distribution: "分布",
+  ranking: "排序",
+  ratio: "比率",
+  growth: "增长",
+  correlation: "相关性",
+  pivot: "透视",
 };
 
 function providerLabel(p?: string): string {
