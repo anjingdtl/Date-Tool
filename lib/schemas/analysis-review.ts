@@ -63,3 +63,21 @@ export function validateAnalysisReview(
   if (r.success) return { ok: true, data: r.data };
   return { ok: false, error: r.error.issues.map((i) => i.message).join("; ") };
 }
+
+/** LLM 输出的终审（不含服务端补全的 createdAt，SPEC 15.3） */
+export const LLMAnalysisReviewSchema = AnalysisReviewSchema.omit({
+  createdAt: true,
+});
+
+export type LLMAnalysisReviewParsed = z.infer<typeof LLMAnalysisReviewSchema>;
+
+/** 校验 LLM 返回的终审（不含 createdAt） */
+export function validateLLMAnalysisReview(
+  raw: unknown,
+):
+  | { ok: true; data: LLMAnalysisReviewParsed }
+  | { ok: false; error: string } {
+  const r = LLMAnalysisReviewSchema.safeParse(raw);
+  if (r.success) return { ok: true, data: r.data };
+  return { ok: false, error: r.error.issues.map((i) => i.message).join("; ") };
+}
