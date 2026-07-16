@@ -174,3 +174,29 @@ export function validateDatasetUnderstanding(
   if (r.success) return { ok: true, data: r.data };
   return { ok: false, error: r.error.issues.map((i) => i.message).join("; ") };
 }
+
+/**
+ * LLM 输出的理解结构（SPEC 10.2）。
+ *
+ * 不含服务端补全字段（id / datasetId / createdAt / confirmedAt）——
+ * LLM 不负责这些，由 understandDataset 补全后组成完整 DatasetUnderstanding。
+ */
+export const LLMUnderstandingSchema = DatasetUnderstandingSchema.omit({
+  id: true,
+  datasetId: true,
+  createdAt: true,
+  confirmedAt: true,
+});
+
+export type LLMUnderstandingParsed = z.infer<typeof LLMUnderstandingSchema>;
+
+/** 校验 LLM 返回的理解（不含服务端字段） */
+export function validateLLMUnderstanding(
+  raw: unknown,
+):
+  | { ok: true; data: LLMUnderstandingParsed }
+  | { ok: false; error: string } {
+  const r = LLMUnderstandingSchema.safeParse(raw);
+  if (r.success) return { ok: true, data: r.data };
+  return { ok: false, error: r.error.issues.map((i) => i.message).join("; ") };
+}

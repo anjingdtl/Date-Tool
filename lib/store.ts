@@ -8,10 +8,12 @@ import {
 import type {
   AnalysisResult,
   ColumnMeta,
+  DataContext,
   DatasetAnalysisConfig,
   DataQualityReport,
   DatasetRow,
   DatasetStatus,
+  DatasetUnderstanding,
   PublicDataset,
   StoredDataset,
 } from "./types";
@@ -543,4 +545,70 @@ export async function setDatasetStatus(
   ds.status = next;
   await saveDataset(ds);
   return ds;
+}
+
+/* ----------------------- v0.3：理解与上下文持久化（SPEC 19.1） ----------------------- */
+
+function understandingPath(id: string): string {
+  return path.join(datasetDir(id), "understanding.json");
+}
+
+function contextPath(id: string): string {
+  return path.join(datasetDir(id), "context.json");
+}
+
+/** 原子保存数据理解（SPEC 19.1/19.2） */
+export async function saveUnderstanding(
+  datasetId: string,
+  understanding: DatasetUnderstanding,
+): Promise<void> {
+  if (!isValidDatasetId(datasetId)) {
+    throw new Error(`[store] 拒绝保存 understanding：ID 非法：${datasetId}`);
+  }
+  await ensureBaseDir();
+  await fs.mkdir(datasetDir(datasetId), { recursive: true });
+  await saveJsonAtomic(understandingPath(datasetId), understanding);
+}
+
+/** 读取数据理解；不存在或损坏返回 null */
+export async function getUnderstanding(
+  datasetId: string,
+): Promise<DatasetUnderstanding | null> {
+  if (!isValidDatasetId(datasetId)) return null;
+  const dirExists = await pathExists(datasetDir(datasetId));
+  if (!dirExists) return null;
+  try {
+    const raw = await fs.readFile(understandingPath(datasetId), "utf-8");
+    return JSON.parse(raw) as DatasetUnderstanding;
+  } catch {
+    return null;
+  }
+}
+
+/** 原子保存 DataContext（已脱敏，供后续 plan/review 复用） */
+export async function saveContext(
+  datasetId: string,
+  context: DataContext,
+): Promise<void> {
+  if (!isValidDatasetId(datasetId)) {
+    throw new Error(`[store] 拒绝保存 context：ID 非法：${datasetId}`);
+  }
+  await ensureBaseDir();
+  await fs.mkdir(datasetDir(datasetId), { recursive: true });
+  await saveJsonAtomic(contextPath(datasetId), context);
+}
+
+/** 读取 DataContext；不存在返回 null */
+export async function getContext(
+  datasetId: string,
+): Promise<DataContext | null> {
+  if (!isValidDatasetId(datasetId)) return null;
+  const dirExists = await pathExists(datasetDir(datasetId));
+  if (!dirExists) return null;
+  try {
+    const raw = await fs.readFile(contextPath(datasetId), "utf-8");
+    return JSON.parse(raw) as DataContext;
+  } catch {
+    return null;
+  }
 }
