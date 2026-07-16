@@ -197,7 +197,7 @@ export interface AnalyzeHooks {
     status: string;
     evidenceCount: number;
   }) => void;
-  onTaskFailed?: (p: { taskId: string; status: string }) => void;
+  onTaskFailed?: (p: { taskId: string; status: string; message?: string }) => void;
   onReview?: (p: { status: string; message: string }) => void;
   onQuestion?: (p: { questions: string[] }) => void;
   onRevision?: (p: {
@@ -211,12 +211,16 @@ export interface AnalyzeHooks {
 export async function runAnalysis(
   datasetId: string,
   hooks: AnalyzeHooks,
-  options?: { userGoal?: string },
+  options?: { userGoal?: string; forceLocal?: boolean },
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ datasetId, userGoal: options?.userGoal }),
+    body: JSON.stringify({
+      datasetId,
+      userGoal: options?.userGoal,
+      forceLocal: options?.forceLocal,
+    }),
   });
 
   if (!res.ok || !res.body) {

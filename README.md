@@ -60,7 +60,9 @@ OPENAI_MODEL=gpt-4o-mini
 也可在“设置”页保存 API Key、Base URL 和模型名，下一次理解或分析立即生效，无需重启。`OPENAI_*` 与旧 `LLM_*` 环境变量名均兼容。
 
 - 有有效 API Key：`analysisMode = llm_orchestrated`，执行理解 → 计划 → 本地计算 → 终审。
-- 无 API Key，或编排/计划失败：`analysisMode = rule_fallback`，`provider = local`。
+- 无 API Key：自动使用 `analysisMode = rule_fallback`、`provider = local`。
+- 有 API Key 但 Understanding 尚未确认：默认 LLM 分析会被阻断；用户可回到预检页确认，或显式点击“本地分析”。
+- 编排/计划失败：保留可用数据并安全回退到本地规则结果。
 - LLM 规划成功时：`provider = local+llm`。这个值不表示 LLM 计算了数值。
 
 ## 使用流程
@@ -68,7 +70,7 @@ OPENAI_MODEL=gpt-4o-mini
 1. 首页上传 Excel / CSV。
 2. 在预检页检查质量、物理字段配置和 AI 数据理解。
 3. 处理阻塞性歧义，修正字段语义后确认。
-4. 在看板运行分析；界面会显示计划、任务执行和终审时间线。
+4. 在看板运行分析；界面会显示分析目标、Session/Revision、计划、任务执行和终审时间线，也可显式选择“本地分析”。
 5. 展开 Evidence 查看任务、字段、样本量、参数和计算结果。
 6. 在“自然语言微调”中提出修改，例如“只看南宁市，按区县展示收入完成率”。
 7. 在 Revision 历史中撤销或恢复旧版本；恢复会创建新 Revision，不删除历史。
@@ -120,8 +122,9 @@ tests/                  # Vitest 单元与 Route/SSE 测试
 
 ## 安全与隐私
 
-- 原始完整行只保存在本机 `.data/`；默认只向 LLM 发送统计、结构和最多 40 条稳定采样行。
+- 原始完整行只保存在本机 `.data/`；默认只向 LLM 发送统计、结构和最多 40 条稳定采样行，设置页可完全关闭行样本发送。
 - 姓名、手机号、邮箱、身份证、账号、地址、设备 ID、客户编号和订单号等候选敏感值会稳定掩码。
+- 字段样例、代表值、Top 值和行样本共用同一脱敏边界；DataContext 超过 token budget 时按固定优先级裁剪并记录省略项。
 - 单元格、字段名和 Sheet 名均视为不可信数据，不会被当作系统指令。
 - LLM 输出必须通过 Zod；字段引用、聚合、公式、依赖和图表关联还会经过服务端业务校验。
 - 对话输入最多 4000 字符；计划、公式、自动修订、Session 和 Revision 均有硬上限。
@@ -148,5 +151,6 @@ tests/                  # Vitest 单元与 Route/SSE 测试
 - 单数据集默认最多存储 5 万行，超出部分会截断，理解、终审和最终警告会明确说明分析基于已载入数据。
 - 工具面向个人本地使用，不包含登录、多用户、云数据库、任意 SQL/Python、PDF/Excel 导出或实时流计算。
 - 任务缓存目前是进程内 LRU；重启后会重新计算，但结果仍可从 Revision 历史读取。
+- 当前导入器以单工作表数据集运行；若反馈要求切换到本次未载入的 Sheet，系统会要求重新导入/选择，而不会虚构跨 Sheet 结果。
 
 版本记录见 [CHANGELOG.md](./CHANGELOG.md)。

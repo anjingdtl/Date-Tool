@@ -14,6 +14,7 @@ interface LLMSettings {
 interface SettingsResponse {
   theme: "verdigris" | "ocean" | "sunset" | "ink";
   llm: LLMSettings;
+  privacy: { sendRowSamples: boolean };
   _hasRealKey: boolean;
 }
 
@@ -63,6 +64,7 @@ export default function SettingsPage() {
   const [apiKey, setApiKey] = useState(""); // 用户输入；保存时若空 → "__KEEP__" 或清空
   const [hasRealKey, setHasRealKey] = useState(false);
   const [model, setModel] = useState("MiniMax-M3");
+  const [sendRowSamples, setSendRowSamples] = useState(true);
 
   const [status, setStatus] = useState<Status>("idle");
   const [testMsg, setTestMsg] = useState("");
@@ -80,6 +82,7 @@ export default function SettingsPage() {
       setApiKey(""); // 永远不在前端留明文
       setHasRealKey(data._hasRealKey);
       setModel(data.llm.model);
+      setSendRowSamples(data.privacy?.sendRowSamples ?? true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载设置失败");
     } finally {
@@ -128,6 +131,7 @@ export default function SettingsPage() {
             apiKey: keyPayload,
             model,
           },
+          privacy: { sendRowSamples },
         }),
       });
       const data = (await r.json()) as SettingsResponse;
@@ -141,7 +145,7 @@ export default function SettingsPage() {
       setError(e instanceof Error ? e.message : "保存失败");
       setStatus("error");
     }
-  }, [theme, provider, baseUrl, apiKey, model, hasRealKey]);
+  }, [theme, provider, baseUrl, apiKey, model, hasRealKey, sendRowSamples]);
 
   const handleClearKey = useCallback(async () => {
     setStatus("saving");
@@ -396,8 +400,21 @@ export default function SettingsPage() {
 
       <section className="card settings-section">
         <div className="settings-section-head">
-          <p className="section-title">数据管理</p>
+          <p className="section-title">数据隐私与管理</p>
         </div>
+        <label className="form-row" style={{ marginBottom: 16 }}>
+          <span className="form-label">LLM 行样本</span>
+          <span className="row" style={{ alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={sendRowSamples}
+              onChange={(event) => setSendRowSamples(event.target.checked)}
+            />
+            <span className="muted">
+              允许发送最多 40 行经敏感字段掩码的代表样本；关闭后仅发送字段统计与聚合摘要。
+            </span>
+          </span>
+        </label>
         <p className="muted">
           上传 / 删除数据集请到 <Link href="/">首页</Link> 操作。
           服务器端设置文件位于 <code className="inline-code">.data/settings.json</code>。

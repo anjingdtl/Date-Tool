@@ -126,8 +126,11 @@ export async function analyzeDataset(
   ds: StoredDataset,
   requestId: string,
   hooks: AnalyzeHooks,
-  options?: { userGoal?: string },
+  options?: { userGoal?: string; forceLocal?: boolean },
 ): Promise<AnalysisResult> {
+  if (options?.forceLocal) {
+    return runLocalFallbackAnalysis(ds, requestId, hooks);
+  }
   const llmConfig = await getActiveLLMConfig();
   if (!llmConfig.enabled) {
     return runLocalFallbackAnalysis(ds, requestId, hooks);
@@ -234,7 +237,7 @@ async function runOrchestratedAnalysis(
   understanding: NonNullable<Awaited<ReturnType<typeof getUnderstanding>>>,
   requestId: string,
   hooks: AnalyzeHooks,
-  options?: { userGoal?: string },
+  options?: { userGoal?: string; forceLocal?: boolean },
 ): Promise<FinalAnalysisResult> {
   const orchHooks: OrchestratorHooks = {
     onStage: (code, message) => hooks.onStage?.(message, code),

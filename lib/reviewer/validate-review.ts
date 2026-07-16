@@ -38,6 +38,13 @@ export function validateReview(
   const itemIds = new Set(ctx.plan.dashboard.items.map((i) => i.id));
 
   for (const f of review.findings) {
+    if (/\d/.test(f.statement) && f.evidenceIds.length === 0) {
+      issues.push({
+        code: "NUMERIC_FINDING_WITHOUT_EVIDENCE",
+        message: `finding「${f.id}」包含数值结论但没有 Evidence`,
+        level: "error",
+      });
+    }
     for (const eid of f.evidenceIds) {
       if (!evidenceIds.has(eid))
         issues.push({

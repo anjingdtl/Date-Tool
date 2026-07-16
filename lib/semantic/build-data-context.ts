@@ -19,12 +19,14 @@ import type {
   DatasetRow,
   StoredDataset,
 } from "@/lib/types";
+import { createHash } from "node:crypto";
 import { computeNumericStats } from "@/lib/analysis/statistics";
 import { computeCategoryStats } from "@/lib/analysis/profile";
 import {
   createValueMasker,
   detectSensitiveFields,
   maskRow,
+  type ValueMasker,
 } from "./detect-sensitive";
 
 const MAX_SAMPLE_ROWS = 40;
@@ -35,6 +37,7 @@ const TAIL_N = 6;
 const RAND_N = 12;
 const MAX_ANOMALY = 10;
 const LOW_CARD_THRESHOLD = 50;
+const DEFAULT_TOKEN_BUDGET = 12_000;
 
 /* ----------------------- 确定性哈希与 PRNG ----------------------- */
 
@@ -59,43 +62,27 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** 行指纹：稳定且能区分不同行内容（不序列化整行，避免大表性能问题） */
-function rowFingerprint(row: DatasetRow, columns: ColumnMeta[]): string {
-  let s = "";
-  for (const c of columns) {
-    const v = row[c.name];
-    if (v === null || v === undefined) {
-      s += "|";
-    } else {
-      const str = String(v);
-      s += `${str.length}:${str.slice(0, 32)}|`;
-    }
-  }
-  return s;
-}
-
 /**
- * 计算 rows hash（覆盖首/中/尾抽样行 + 行数 + 列名），用于种子与任务缓存。
- * 同一数据集 → 同一 hash；数据内容变化（即便只在中段）通常能反映到指纹。
+ * 计算完整 rows hash（覆盖每行每列），用于固定采样种子与任务缓存。
+ * 任意已载入单元格变化都会使缓存键失效。
  */
 export function computeRowsHash(
   rows: DatasetRow[],
   columns: ColumnMeta[],
 ): string {
-  const n = rows.length;
-  const colNames = columns.map((c) => c.name).join(",");
-  const points =
-    n > 0
-      ? [0, Math.floor(n / 4), Math.floor(n / 2), Math.floor((3 * n) / 4), n - 1]
-      : [];
-  let fp = "";
-  for (const p of points) {
-    for (let k = -2; k <= 2; k++) {
-      const idx = Math.min(n - 1, Math.max(0, p + k));
-      if (idx >= 0 && idx < n) fp += rowFingerprint(rows[idx], columns) + ";";
+  const hash = createHash("sha256");
+  hash.update(String(rows.length));
+  for (const column of columns) hash.update(`\u001f${column.name}`);
+  for (const row of rows) {
+    hash.update("\u001e");
+    for (const column of columns) {
+      const value = row[column.name];
+      hash.update(`\u001f${typeof value}:`);
+      if (value instanceof Date) hash.update(value.toISOString());
+      else if (value !== null && value !== undefined) hash.update(String(value));
     }
   }
-  return hashStr(`${colNames}|${n}|${fp}`).toString(16);
+  return hash.digest("hex");
 }
 
 /* ----------------------- 采样 ----------------------- */
@@ -103,6 +90,7 @@ export function computeRowsHash(
 /** 头/中/尾/随机采样，按行 index 去重，上限 MAX_SAMPLE_ROWS */
 function sampleRows(
   rows: DatasetRow[],
+  columns: ColumnMeta[],
   rng: () => number,
 ): { rows: DatasetRow[]; truncated: boolean } {
   const n = rows.length;
@@ -127,13 +115,32 @@ function sampleRows(
       add(lo + Math.floor((span * i) / MID_N));
     }
   }
+  // 低基数字段类别覆盖：按原始顺序选择尚未出现的分类，保持确定性。
+  for (const column of columns.filter(
+    (item) =>
+      (item.distinctCount ?? 0) > 1 &&
+      (item.distinctCount ?? 0) <= LOW_CARD_THRESHOLD,
+  ).slice(0, 3)) {
+    const seen = new Set<string>();
+    for (let i = 0; i < rows.length && seen.size < 8; i++) {
+      const value = rows[i][column.name];
+      if (value === null || value === undefined || value === "") continue;
+      const key = `${typeof value}:${String(value)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      add(i);
+    }
+  }
   // 固定种子随机
   for (let i = 0; i < RAND_N; i++) {
     add(Math.floor(rng() * n));
   }
-  const all = [...picked.entries()].sort((a, b) => a[0] - b[0]);
+  const all = [...picked.entries()];
   const total = all.length;
-  const sliced = all.slice(0, MAX_SAMPLE_ROWS).map(([, r]) => r);
+  const sliced = all
+    .slice(0, MAX_SAMPLE_ROWS)
+    .sort((a, b) => a[0] - b[0])
+    .map(([, r]) => r);
   return { rows: sliced, truncated: total > MAX_SAMPLE_ROWS };
 }
 
@@ -212,6 +219,7 @@ function buildColumnContext(
   col: ColumnMeta,
   rows: DatasetRow[],
   sensitive: Set<string>,
+  masker: ValueMasker,
 ): ColumnDataContext {
   const name = col.name;
   const detectedType = col.type;
@@ -220,8 +228,9 @@ function buildColumnContext(
   const sv = (col.sampleValues ?? []).filter(
     (v) => v !== null && v !== undefined && v !== "",
   );
-  const representativeValues = sv.slice(0, MAX_REPRESENTATIVE);
-  const sampleValues = sv.slice(0, MAX_REPRESENTATIVE);
+  const safeValue = (value: unknown) => masker.mask(name, value);
+  const representativeValues = sv.slice(0, MAX_REPRESENTATIVE).map(safeValue);
+  const sampleValues = sv.slice(0, MAX_REPRESENTATIVE).map(safeValue);
 
   const typeDistribution: Record<ColumnType, number> = {
     number: 0,
@@ -244,7 +253,7 @@ function buildColumnContext(
     const cat = computeCategoryStats(rows, name, 8, 0);
     if (cat.distinctCount > 0) {
       topValues = cat.top.map((t) => ({
-        value: t.value,
+        value: safeValue(t.value),
         count: t.count,
         rate: t.rate,
       }));
@@ -335,29 +344,14 @@ function buildColumnContext(
   };
 }
 
-/* ----------------------- token 估算 ----------------------- */
-
-function estimateContextChars(
-  cols: ColumnDataContext[],
-  sampled: DatasetRow[],
-): number {
-  let chars = 0;
-  for (const c of cols) {
-    chars += c.name.length + 120;
-    chars += JSON.stringify(c.numericStats ?? {}).length;
-    chars += JSON.stringify(c.topValues ?? []).length;
-    chars += JSON.stringify(c.representativeValues).length;
-  }
-  chars += JSON.stringify(sampled).length;
-  return chars;
-}
-
 /* ----------------------- 主入口 ----------------------- */
 
 export interface BuildDataContextOptions {
   userDescription?: string;
   /** 是否发送行样本（SPEC 9.4 用户可关闭，只发统计） */
   sendRowSamples?: boolean;
+  /** LLM 上下文预算；超限时按异常候选→边界样本→普通样本顺序裁剪。 */
+  tokenBudget?: number;
 }
 
 /**
@@ -378,7 +372,7 @@ export function buildDataContext(
   const masker = createValueMasker(sensitive);
 
   const colContexts = columns.map((c) =>
-    buildColumnContext(c, rows, sensitive),
+    buildColumnContext(c, rows, sensitive, masker),
   );
   const numericFieldNames = colContexts
     .filter((c) => c.numericStats)
@@ -388,7 +382,7 @@ export function buildDataContext(
 
   let sampled: DatasetRow[] = [];
   if (sendRowSamples) {
-    sampled = sampleRows(rows, rng).rows;
+    sampled = sampleRows(rows, columns, rng).rows;
   }
   // 数据行数超过发给 LLM 的样本上限时标记截断（SPEC 9.3 规则 9）
   const truncated = sendRowSamples && rows.length > MAX_SAMPLE_ROWS;
@@ -400,6 +394,45 @@ export function buildDataContext(
     : [];
 
   const maskAll = (rs: DatasetRow[]) => rs.map((r) => maskRow(r, masker));
+
+  let safeSampled = maskAll(sampled);
+  let safeBoundary = maskAll(boundary);
+  let safeAnomaly = maskAll(anomaly);
+  const omittedSections: string[] = [];
+  if (!sendRowSamples) {
+    omittedSections.push(
+      "sampledRows",
+      "boundaryRows",
+      "anomalyCandidateRows",
+    );
+  }
+
+  const budget = Math.max(1_000, options.tokenBudget ?? DEFAULT_TOKEN_BUDGET);
+  const estimateTokens = () =>
+    Math.ceil(
+      JSON.stringify({
+        columns: colContexts,
+        sampledRows: safeSampled,
+        boundaryRows: safeBoundary,
+        anomalyCandidateRows: safeAnomaly,
+        quality: ds.quality,
+        userDescription: options.userDescription,
+      }).length / 4,
+    );
+  if (estimateTokens() > budget && safeAnomaly.length > 0) {
+    safeAnomaly = [];
+    omittedSections.push("anomalyCandidateRows:token_budget");
+  }
+  if (estimateTokens() > budget && safeBoundary.length > 0) {
+    safeBoundary = [];
+    omittedSections.push("boundaryRows:token_budget");
+  }
+  while (estimateTokens() > budget && safeSampled.length > 8) {
+    safeSampled = safeSampled.filter((_, index) => index % 2 === 0);
+    if (!omittedSections.includes("sampledRows:token_budget")) {
+      omittedSections.push("sampledRows:token_budget");
+    }
+  }
 
   const workbook = {
     fileName: ds.fileName,
@@ -418,7 +451,7 @@ export function buildDataContext(
             confidence: 0.9,
           },
         ],
-        previewMatrix: maskAll(sampled.slice(0, 5)).map((r) =>
+        previewMatrix: safeSampled.slice(0, 5).map((r) =>
           columns.map((c) => r[c.name] ?? null),
         ),
         likelyDataStartRow: 1,
@@ -429,17 +462,7 @@ export function buildDataContext(
     selectedSheetNames: [ds.sheetName ?? "Sheet1"],
   };
 
-  const omittedSections: string[] = [];
-  if (!sendRowSamples) {
-    omittedSections.push(
-      "sampledRows",
-      "boundaryRows",
-      "anomalyCandidateRows",
-    );
-  }
-  const estimatedTokens = Math.ceil(
-    estimateContextChars(colContexts, maskAll(sampled)) / 4,
-  );
+  const estimatedTokens = estimateTokens();
 
   const quality: DataQualityReport = ds.quality ?? {
     originalRowCount: ds.originalRowCount ?? rows.length,
@@ -459,14 +482,14 @@ export function buildDataContext(
     rowCount: ds.originalRowCount ?? rows.length,
     storedRowCount: ds.storedRowCount ?? rows.length,
     columns: colContexts,
-    sampledRows: maskAll(sampled),
-    boundaryRows: maskAll(boundary),
-    anomalyCandidateRows: maskAll(anomaly),
+    sampledRows: safeSampled,
+    boundaryRows: safeBoundary,
+    anomalyCandidateRows: safeAnomaly,
     quality,
     userDescription: options.userDescription,
     tokenBudget: {
       estimatedTokens,
-      truncated,
+      truncated: truncated || omittedSections.some((item) => item.includes("token_budget")),
       omittedSections,
     },
     generatedAt: new Date().toISOString(),

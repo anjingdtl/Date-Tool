@@ -45,9 +45,20 @@ export function analyzePatchImpact(
   if (patch.addTasks.length > 0) reasons.push("新增分析任务");
   if (patch.removeTasks.length > 0) reasons.push("删除分析任务");
 
-  const requiresPlanRebuild = false;
+  const requiresPlanRebuild = Boolean(
+    patch.understandingPatch?.datasetKind ||
+      patch.understandingPatch?.tableShape ||
+      patch.understandingPatch?.businessDescription !== undefined ||
+      patch.understandingPatch?.grainDescription !== undefined ||
+      patch.understandingPatch?.rowMeaning !== undefined ||
+      patch.understandingPatch?.selectedSheets,
+  );
   const understandingPatch = patch.understandingPatch;
   if (understandingPatch) {
+    if (requiresPlanRebuild) {
+      nextPlan.tasks.forEach((task) => seeds.add(task.id));
+      reasons.push("数据集类型、表格粒度或 Sheet 发生变化，需要重建计划");
+    }
     const fields = new Set((understandingPatch.fields ?? []).map((change) => change.field));
     for (const task of nextPlan.tasks) {
       const refs = [
@@ -69,7 +80,6 @@ export function analyzePatchImpact(
     reasons.push("字段语义或关系发生变化");
   }
 
-  // 当前 Patch 协议不允许直接修改 datasetKind/tableShape/grain；若未来扩展，必须重建计划。
   const affected = descendants(nextPlan, seeds);
   const nextIds = new Set(nextPlan.tasks.map((task) => task.id));
   const removed = new Set(basePlan.tasks.map((task) => task.id).filter((id) => !nextIds.has(id)));

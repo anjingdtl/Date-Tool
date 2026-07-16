@@ -99,6 +99,7 @@ export default function ImportPreviewPage({
   const [understandingPhase, setUnderstandingPhase] = useState<UnderstandingPhase>("idle");
   const [understandingMsg, setUnderstandingMsg] = useState("");
   const [pendingChanges, setPendingChanges] = useState<FieldUnderstandingChange[]>([]);
+  const [useLocalFallback, setUseLocalFallback] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -165,6 +166,7 @@ export default function ImportPreviewPage({
     setUnderstandingPhase("loading");
     setUnderstandingMsg("正在理解数据…");
     setPendingChanges([]);
+    setUseLocalFallback(false);
     await runUnderstand(
       draftId,
       {
@@ -174,6 +176,7 @@ export default function ImportPreviewPage({
         onDone: (status) => {
           if (status === "fallback") {
             setUnderstandingPhase("fallback");
+            setUseLocalFallback(true);
             setUnderstandingMsg("未配置 LLM，可使用本地模式生成看板。");
           } else if (status === "needs_user_input") {
             setUnderstandingPhase("needs_input");
@@ -225,6 +228,49 @@ export default function ImportPreviewPage({
       setBanner({ type: "ok", msg: "语义修改已保存。" });
     } catch (e) {
       setBanner({ type: "error", msg: e instanceof Error ? e.message : "保存失败" });
+    }
+  }
+
+  async function resolveUnderstandingAmbiguity(
+    ambiguityId: string,
+    choiceChanges: FieldUnderstandingChange[],
+  ) {
+    if (!understanding) return;
+    const ambiguity = understanding.ambiguities.find((item) => item.id === ambiguityId);
+    const relevantPending = pendingChanges.filter((change) =>
+      ambiguity?.fields.includes(change.field),
+    );
+    const merged = [...relevantPending];
+    for (const change of choiceChanges) {
+      const index = merged.findIndex((item) => item.field === change.field);
+      if (index >= 0) {
+        merged[index] = {
+          field: change.field,
+          changes: { ...merged[index].changes, ...change.changes },
+        };
+      } else {
+        merged.push(change);
+      }
+    }
+    try {
+      const result = await updateUnderstanding(draftId, {
+        ambiguityResolutions: [{ ambiguityId, fieldChanges: merged }],
+      });
+      setUnderstanding(result.understanding);
+      setPendingChanges((previous) =>
+        previous.filter((change) => !merged.some((item) => item.field === change.field)),
+      );
+      setUnderstandingPhase(
+        result.understanding.ambiguities.some((item) => item.blocking)
+          ? "needs_input"
+          : "ready",
+      );
+      setBanner({ type: "ok", msg: "歧义答案已保存。" });
+    } catch (e) {
+      setBanner({
+        type: "error",
+        msg: e instanceof Error ? e.message : "保存歧义答案失败",
+      });
     }
   }
 
@@ -553,6 +599,9 @@ export default function ImportPreviewPage({
               <button className="btn" onClick={() => startUnderstand(true)}>
                 重试
               </button>
+              <button className="btn" onClick={() => setUseLocalFallback(true)}>
+                使用本地规则模式
+              </button>
             </div>
           </div>
         )}
@@ -563,7 +612,11 @@ export default function ImportPreviewPage({
             understandingPhase === "confirmed") && (
             <>
               <UnderstandingOverview understanding={understanding} />
-              <AmbiguityPanel ambiguities={understanding.ambiguities} />
+              <AmbiguityPanel
+                ambiguities={understanding.ambiguities}
+                pendingFields={pendingChanges.map((change) => change.field)}
+                onResolve={resolveUnderstandingAmbiguity}
+              />
               <div style={{ marginTop: 12 }}>
                 <p
                   className="section-title"
@@ -603,6 +656,12 @@ export default function ImportPreviewPage({
                     </button>
                     <button className="btn" onClick={() => startUnderstand(true)}>
                       重新理解
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={() => setUseLocalFallback(true)}
+                    >
+                      使用本地规则模式
                     </button>
                   </>
                 )}
@@ -725,6 +784,7 @@ export default function ImportPreviewPage({
           <div className="muted" style={{ fontSize: 13, maxWidth: 600 }}>
             点击「生成看板」后，系统会再次校验字段配置（SPEC 9.7），
             通过则进入分析阶段。如有阻断错误将定位到具体字段。
+            {useLocalFallback && " 当前已明确选择本地规则模式。"}
           </div>
           <div className="row">
             <Link className="btn" href="/">
@@ -733,7 +793,14 @@ export default function ImportPreviewPage({
             <button
               className="btn btn-primary"
               onClick={confirmAndGo}
-              disabled={confirming || saving || data.status === "ready"}
+              disabled={
+                confirming ||
+                saving ||
+                data.status === "ready" ||
+                (!!understanding &&
+                  understanding.status !== "confirmed" &&
+                  !useLocalFallback)
+              }
             >
               {confirming ? "校验中…" : "✨ 生成看板"}
             </button>

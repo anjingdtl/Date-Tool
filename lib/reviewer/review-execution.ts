@@ -33,14 +33,29 @@ export async function reviewExecution(
 ): Promise<ReviewExecutionResult> {
   const llmConfig = await getActiveLLMConfig();
   if (!llmConfig.enabled) {
+    logger.warn("review_completed", {
+      requestId: input.requestId,
+      status: "unavailable",
+      errorCode: "LLM_DISABLED",
+    });
     return { ok: false, review: null, error: "LLM 未启用，终审不可用" };
   }
+
+  logger.info("review_started", {
+    requestId: input.requestId,
+    taskCount: input.plan.tasks.length,
+  });
 
   const userPrompt = buildReviewInput(input);
   let raw: unknown;
   try {
     raw = await chatJSON(REVIEW_SYSTEM_PROMPT, userPrompt, input.requestId);
   } catch (err) {
+    logger.warn("review_completed", {
+      requestId: input.requestId,
+      status: "unavailable",
+      errorCode: "LLM_CALL_FAILED",
+    });
     return {
       ok: false,
       review: null,
@@ -53,6 +68,11 @@ export async function reviewExecution(
     logger.warn("review_schema_failed", {
       requestId: input.requestId,
       error: parsed.error,
+    });
+    logger.warn("review_completed", {
+      requestId: input.requestId,
+      status: "unavailable",
+      errorCode: "SCHEMA_INVALID",
     });
     return { ok: false, review: null, error: parsed.error };
   }
@@ -73,6 +93,11 @@ export async function reviewExecution(
     logger.warn("review_validation_failed", {
       requestId: input.requestId,
       issues: v.issues.map((i) => i.message),
+    });
+    logger.warn("review_completed", {
+      requestId: input.requestId,
+      status: "unavailable",
+      errorCode: "REFERENCE_INVALID",
     });
     // 引用错误（编造 Evidence）→ 终审不可信，降级
     return {

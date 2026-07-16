@@ -6,6 +6,9 @@ interface ChatMessage {
   content: string;
 }
 
+const JSON_MAX_TOKENS = 6_000;
+const STREAM_MAX_TOKENS = 3_000;
+
 /** 取当前生效的 LLM 配置（SPEC 6 统一入口：settings → env → 默认）。热更新支持。 */
 async function activeLLM(): Promise<{ baseUrl: string; apiKey: string; model: string }> {
   const c = await getActiveLLMConfig();
@@ -40,6 +43,7 @@ export async function chatJSON(
       body: JSON.stringify({
         model: llm.model,
         temperature: 0.3,
+        max_tokens: JSON_MAX_TOKENS,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: system },
@@ -50,9 +54,9 @@ export async function chatJSON(
     });
 
     if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      logger.warn("LLM JSON 调用失败", { requestId, status: res.status, txt });
-      throw new Error(`LLM 调用失败(${res.status}): ${txt.slice(0, 200)}`);
+      await res.body?.cancel().catch(() => undefined);
+      logger.warn("LLM JSON 调用失败", { requestId, status: res.status });
+      throw new Error(`LLM 调用失败(${res.status})`);
     }
 
     const json = (await res.json()) as {
@@ -89,6 +93,7 @@ export async function streamChat(
       body: JSON.stringify({
         model: llm.model,
         temperature: 0.6,
+        max_tokens: STREAM_MAX_TOKENS,
         stream: true,
         messages: [
           { role: "system", content: system },
@@ -99,8 +104,8 @@ export async function streamChat(
     });
 
     if (!res.ok || !res.body) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(`LLM 流式调用失败(${res.status}): ${txt.slice(0, 200)}`);
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`LLM 流式调用失败(${res.status})`);
     }
 
     const reader = res.body.getReader();

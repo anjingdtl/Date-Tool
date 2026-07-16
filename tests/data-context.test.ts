@@ -109,6 +109,15 @@ describe("buildDataContext - SPEC 9", () => {
     expect(computeRowsHash(rowsA, cols)).not.toBe(computeRowsHash(rowsB, cols));
   });
 
+  it("rowsHash 覆盖完整数据：修改非采样位置也会变化", () => {
+    const rowsA = makeKpiRows(200);
+    const rowsB = rowsA.map((row) => ({ ...row }));
+    rowsB[137].业务收入 = 999999;
+    expect(computeRowsHash(rowsA, KPI_COLUMNS)).not.toBe(
+      computeRowsHash(rowsB, KPI_COLUMNS),
+    );
+  });
+
   it("敏感字段在 sampledRows 中被脱敏（完整原值不出现）", () => {
     const ds = makeDataset(makeKpiRows(30), KPI_COLUMNS);
     const ctx = buildDataContext(ds);
@@ -120,6 +129,23 @@ describe("buildDataContext - SPEC 9", () => {
     // 标记 possibleSensitive
     const nameCol = ctx.columns.find((c) => c.name === "客户姓名");
     expect(nameCol?.possibleSensitive).toBe(true);
+  });
+
+  it("敏感值不会从列代表值或 Top 值泄漏到整个 LLM 上下文", () => {
+    const sensitiveColumns = KPI_COLUMNS.map((column) =>
+      column.name === "客户姓名"
+        ? {
+            ...column,
+            sampleValues: ["张三", "李四", "王五"],
+            distinctCount: 3,
+          }
+        : column,
+    );
+    const context = buildDataContext(makeDataset(makeKpiRows(30), sensitiveColumns));
+    const payload = JSON.stringify(context);
+    expect(payload).not.toContain("张三");
+    expect(payload).not.toContain("李四");
+    expect(payload).not.toContain("王五");
   });
 
   it("高基数字段代表值裁剪到上限（SPEC 9.3 规则 10）", () => {
@@ -143,6 +169,34 @@ describe("buildDataContext - SPEC 9", () => {
     expect(big.tokenBudget.truncated).toBe(true);
     expect(small.tokenBudget.truncated).toBe(false);
     expect(big.tokenBudget.estimatedTokens).toBeGreaterThan(0);
+  });
+
+  it("token budget 超限时按优先级裁剪样本并记录原因", () => {
+    const context = buildDataContext(
+      makeDataset(makeKpiRows(300), KPI_COLUMNS),
+      { tokenBudget: 1000 },
+    );
+    expect(context.tokenBudget.truncated).toBe(true);
+    expect(
+      context.tokenBudget.omittedSections.some((item) => item.includes("token_budget")),
+    ).toBe(true);
+  });
+
+  it("低基数字段的代表类别会进入稳定样本", () => {
+    const categories = ["A", "B", "C", "D", "E", "F"];
+    const rows = Array.from({ length: 100 }, (_, index) => ({
+      类别: categories[Math.floor(index / 15) % categories.length],
+      指标: index,
+    }));
+    const context = buildDataContext(
+      makeDataset(rows, [
+        col("类别", { distinctCount: categories.length }),
+        col("指标", { type: "number" }),
+      ]),
+    );
+    expect(new Set(context.sampledRows.map((row) => row.类别))).toEqual(
+      new Set(categories),
+    );
   });
 
   it("sendRowSamples=false 时省略行样本并记录 omittedSections", () => {

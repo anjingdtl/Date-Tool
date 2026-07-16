@@ -102,10 +102,10 @@ export async function POST(
           userDescription: body.userDescription,
           force,
         });
-
+        // DataContext 在 LLM 关闭或理解失败时也必须保留，便于重试与审计。
+        await saveContext(params.id, result.context);
         if (result.understanding) {
           await saveUnderstanding(params.id, result.understanding);
-          await saveContext(params.id, result.context);
           if (result.status === "needs_user_input") {
             send("ambiguity", { understanding: result.understanding });
           } else {

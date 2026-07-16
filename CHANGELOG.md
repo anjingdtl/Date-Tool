@@ -7,16 +7,19 @@
 ### 新增
 
 - **DataContext 与隐私层**：稳定头中尾/等距/固定种子采样、列统计、token budget、敏感字段识别与一致掩码；单元格提示注入隔离。
+- **隐私控制**：设置页可关闭发送行样本；字段样例、代表值、Top 值与采样行统一脱敏，完整 rows SHA-256 防止缓存误命中。
 - **数据理解协议**：识别数据集类型、表格结构、行粒度、字段语义、指标行为、字段关系、派生指标和歧义；支持预检页修正与确认。
 - **受控 AnalysisPlan**：Zod Schema、字段/聚合/语义/公式/依赖/图表/任务上限校验，LLM JSON 最多修复两次。
 - **安全公式 AST**：字段、常量、四则运算、`safe_divide`、`abs`、`round`；禁止动态代码执行。
 - **确定性工具注册表**：`profile / aggregate / timeseries / compare / distribution / ranking / ratio / growth / correlation / anomaly / pivot`，每个任务生成 Evidence、输入哈希和结果哈希。
+- **数值分布与严格排名**：distribution 支持分类分布和数值等宽分箱；ranking 强制明确聚合、排序指标与 Top/Bottom 方向。
 - **任务执行器**：DAG 拓扑执行、并发上限 3、单任务失败隔离、依赖跳过、进程内 LRU 缓存与增量结果复用。
 - **LLM 终审**：`approved / revise / needs_user_input`，Evidence 引用校验、图表决策、追加任务与最多两轮自动修订；终审失败保留确定性结果。
 - **Session / Revision**：独立持久化当前计划、语义快照、执行结果、终审和最终看板；先写 Revision 再原子激活 Session。
 - **自然语言微调**：用户反馈转换为 `AnalysisPlanPatch`；展示修改不重算，任务修改只重算受影响任务及下游依赖；stale/非法 Patch 不激活。
 - **Revision 历史、撤销和恢复**：恢复历史内容时创建新 Revision，不删除后续历史。
 - **编排 UI**：计划/任务/终审时间线、问题面板、自然语言输入、当前模式与 Revision 历史。
+- **显式模式与歧义闭环**：阻塞性歧义可在预检页选择/修正后提交；有 LLM 但理解未确认时阻断默认编排，并提供显式本地分析入口。
 - **图表扩展**：area、stacked bar、scatter、heatmap、KPI；table 使用任务结果行而不是原始预览行。
 - **新增 API**：Understanding、Session、Feedback、Revision 详情与 Restore；SSE 扩展 plan/task/review/question/revision 事件。
 - **清理旧默认链路**：移除仅服务于 v0.2“LLM 只做解读”的 `lib/llm-prompt.ts`，默认入口统一到 v0.3 编排门面。
@@ -26,6 +29,8 @@
 - 同路径 JSON 写入进程内串行，临时文件执行 fsync/关闭后 rename。
 - Session/Revision ID 进行安全字符校验，阻断路径穿越；默认上限分别为每数据集 5 个 Session、每 Session 20 个 Revision。
 - LLM、计划或终审不可用时安全降级；本地新结果标记 `version=v0.3.0`、`analysisMode=rule_fallback`。
+- LLM 请求增加输出 token 上限；供应商错误正文不进入日志/客户端；四类 System Prompt 统一隔离字段名、Sheet 名和单元格提示注入。
+- 计划校验覆盖 20 类规则，并调用各注册工具参数校验；终审 Evidence 输入包含裁剪后的确定性结果，无 Evidence 的数值 finding 会被拒绝。
 - 所有最终 `ComputedInsight` 只保留有效 Evidence 引用；终审循环超限会标记 `approved_with_warnings`。
 - Feedback 最长 4000 字符；API Key、完整原始行和敏感原值不进入日志或持久化编排对象。
 

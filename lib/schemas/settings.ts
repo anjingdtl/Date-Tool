@@ -16,6 +16,9 @@ export const LLMSettingsSchema = z.object({
 export const AppSettingsSchema = z.object({
   theme: ThemeSchema,
   llm: LLMSettingsSchema,
+  privacy: z.object({
+    sendRowSamples: z.boolean(),
+  }),
 });
 
 /**
@@ -30,6 +33,11 @@ export const SettingsUpdateSchema = z.object({
       baseUrl: z.string().trim().max(500).optional(),
       apiKey: z.string().max(500).optional(),
       model: z.string().trim().max(200).optional(),
+    })
+    .optional(),
+  privacy: z
+    .object({
+      sendRowSamples: z.boolean().optional(),
     })
     .optional(),
 });

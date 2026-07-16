@@ -85,7 +85,11 @@ export async function POST(
                 evidenceCount: execution.evidence.length,
               }),
             onTaskFailed: (task, execution) =>
-              send("task_failed", { taskId: task.id, status: execution.status }),
+              send("task_failed", {
+                taskId: task.id,
+                status: execution.status,
+                message: execution.warnings[0] ?? "任务执行失败",
+              }),
             onReview: (review) =>
               send("review", {
                 status: review.status,

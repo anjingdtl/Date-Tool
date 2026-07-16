@@ -66,6 +66,7 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<TaskStatusItem[]>([]);
   const [revisions, setRevisions] = useState<RevisionListItem[]>([]);
   const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [objectives, setObjectives] = useState<string[]>([]);
 
   const applyResult = useCallback((result: AnalysisResult) => {
     setSummary(result.summary);
@@ -102,6 +103,7 @@ export default function DashboardPage() {
         setRevisionId(session.activeRevision.id);
         setReviewStatus(session.activeRevision.finalResult?.reviewStatus);
         setQuestions(session.activeRevision.finalResult?.questionsForUser ?? []);
+        setObjectives(session.activeRevision.plan.objectives);
       }
     } catch {
       setRevisions([]);
@@ -129,7 +131,7 @@ export default function DashboardPage() {
     load();
   }, [load]);
 
-  const startAnalysis = useCallback(async () => {
+  const startAnalysis = useCallback(async (forceLocal = false) => {
     setStreaming(true);
     setRunError("");
     setSummary("");
@@ -145,6 +147,7 @@ export default function DashboardPage() {
     setTimeline([]);
     setTasks([]);
     setQuestions([]);
+    setObjectives([]);
     let completedSessionId = "";
     try {
       await runAnalysis(id, {
@@ -162,8 +165,10 @@ export default function DashboardPage() {
           setStage(s);
           setTimeline((previous) => [...previous, s]);
         },
-        onPlan: (plan) =>
-          setTimeline((previous) => [...previous, `计划已生成：${plan.taskCount} 个任务`]),
+        onPlan: (plan) => {
+          setObjectives(plan.objectives);
+          setTimeline((previous) => [...previous, `计划已生成：${plan.taskCount} 个任务`]);
+        },
         onTaskStarted: (task) =>
           setTasks((previous) => [
             ...previous.filter((item) => item.id !== task.taskId),
@@ -178,7 +183,9 @@ export default function DashboardPage() {
         onTaskFailed: (task) =>
           setTasks((previous) =>
             previous.map((item) =>
-              item.id === task.taskId ? { ...item, status: "failed" } : item,
+              item.id === task.taskId
+                ? { ...item, status: "failed", message: task.message }
+                : item,
             ),
           ),
         onReview: (review) =>
@@ -212,7 +219,7 @@ export default function DashboardPage() {
           if (completedSessionId) void loadSession(completedSessionId);
         },
         onError: (m) => setRunError(m),
-      });
+      }, { forceLocal });
     } catch (e) {
       setRunError(e instanceof Error ? e.message : "分析失败");
     } finally {
@@ -233,8 +240,10 @@ export default function DashboardPage() {
           setStage(value);
           setTimeline((previous) => [...previous, value]);
         },
-        onPlan: (plan) =>
-          setTimeline((previous) => [...previous, `修改计划已生成：${plan.taskCount} 个任务`]),
+        onPlan: (plan) => {
+          setObjectives(plan.objectives);
+          setTimeline((previous) => [...previous, `修改计划已生成：${plan.taskCount} 个任务`]);
+        },
         onTaskStarted: (task) =>
           setTasks((previous) => [
             ...previous.filter((item) => item.id !== task.taskId),
@@ -246,7 +255,11 @@ export default function DashboardPage() {
           ),
         onTaskFailed: (task) =>
           setTasks((previous) =>
-            previous.map((item) => item.id === task.taskId ? { ...item, status: "failed" } : item),
+            previous.map((item) =>
+              item.id === task.taskId
+                ? { ...item, status: "failed", message: task.message }
+                : item,
+            ),
           ),
         onReview: (review) =>
           setTimeline((previous) => [...previous, `终审：${review.message}`]),
@@ -329,8 +342,16 @@ export default function DashboardPage() {
             <span aria-hidden>⚙</span>
           </Link>
           <button
+            className="btn"
+            onClick={() => startAnalysis(true)}
+            disabled={streaming}
+            title="跳过 LLM 编排，直接运行本地确定性规则分析"
+          >
+            本地分析
+          </button>
+          <button
             className="btn btn-primary"
-            onClick={startAnalysis}
+            onClick={() => startAnalysis(false)}
             disabled={streaming}
           >
             {streaming ? (
@@ -379,6 +400,13 @@ export default function DashboardPage() {
                 {analysisMode === "llm_orchestrated" ? "LLM 编排模式" : "本地规则模式"}
               </span>
               {revisionId && <span className="badge muted">Revision {revisionId}</span>}
+              {sessionId && <span className="badge muted">Session {sessionId}</span>}
+            </div>
+          )}
+          {objectives.length > 0 && (
+            <div className="card agent-panel">
+              <h3>分析目标</h3>
+              <div className="muted">{objectives.join("；")}</div>
             </div>
           )}
           <ReviewPanel status={reviewStatus} questions={questions} />

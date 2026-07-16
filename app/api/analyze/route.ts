@@ -5,7 +5,9 @@ import {
   updateAnalysis,
   isValidDatasetId,
   setDatasetStatus,
+  getUnderstanding,
 } from "@/lib/store";
+import { getActiveLLMConfig } from "@/lib/llm-config";
 import { newRequestId } from "@/lib/respond";
 import { logger } from "@/lib/logger";
 
@@ -29,7 +31,12 @@ export async function POST(req: NextRequest) {
   const requestId = newRequestId();
   const encoder = new TextEncoder();
 
-  let body: { datasetId?: string; userGoal?: string; forceNewSession?: boolean };
+  let body: {
+    datasetId?: string;
+    userGoal?: string;
+    forceNewSession?: boolean;
+    forceLocal?: boolean;
+  };
   try {
     body = await req.json();
   } catch {
@@ -81,6 +88,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const llmConfig = await getActiveLLMConfig();
+  if (llmConfig.enabled && !body.forceLocal) {
+    const understanding = await getUnderstanding(datasetId);
+    if (!understanding || understanding.status !== "confirmed") {
+      return jsonResponse(
+        409,
+        "UNDERSTANDING_REQUIRED",
+        "默认 LLM 编排需要先完成并确认 AI 数据理解；也可以明确选择本地规则分析。",
+        requestId,
+      );
+    }
+  }
+
   // 进入 analyzing（SPEC 12.3）
   await setDatasetStatus(datasetId, "analyzing");
   logger.info("analysis_started", { requestId, datasetId });
@@ -122,7 +142,11 @@ export async function POST(req: NextRequest) {
                 evidenceCount: r.evidence.length,
               }),
             onTaskFailed: (t, r) =>
-              send("task_failed", { taskId: t.id, status: r.status }),
+              send("task_failed", {
+                taskId: t.id,
+                status: r.status,
+                message: r.warnings[0] ?? "任务执行失败",
+              }),
             onReview: (rev) =>
               send("review", { status: rev.status, message: rev.executiveSummary }),
             onQuestion: (q) => send("question", { questions: q }),
@@ -133,7 +157,7 @@ export async function POST(req: NextRequest) {
                 source: rev.source,
               }),
           },
-          { userGoal: body.userGoal },
+          { userGoal: body.userGoal, forceLocal: body.forceLocal },
         );
 
         await updateAnalysis(datasetId, result); // 内部将 analyzing → completed

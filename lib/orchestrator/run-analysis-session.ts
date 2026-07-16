@@ -95,6 +95,28 @@ function applyChartDecisions(
   };
 }
 
+function localReviewFallbackNarrative(
+  plan: AnalysisPlan,
+  execution: PlanExecutionResult,
+  truncationNote?: string,
+): string {
+  const results = Object.values(execution.results);
+  const succeeded = results.filter((result) =>
+    result.status === "success" || result.status === "partial",
+  ).length;
+  const failed = results.length - succeeded;
+  return [
+    `本地确定性引擎已按计划完成 ${succeeded}/${plan.tasks.length} 个分析任务。`,
+    failed > 0
+      ? `${failed} 个任务失败或因依赖未满足而跳过，相关图表与结论已自动排除。`
+      : "所有计划任务均已产生可追溯的确定性结果。",
+    truncationNote,
+    "LLM 终审当前不可用，因此这里只展示本地计算结果与 Evidence，不补充未经验证的数值结论。",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export function finalizeAnalysisResult(args: {
   dataset: StoredDataset;
   plan: AnalysisPlan;
@@ -174,7 +196,10 @@ export function finalizeAnalysisResult(args: {
     insights,
     charts: chartsSpec,
     options,
-    narrative: review?.narrative ?? "",
+    narrative:
+      reviewOk && review
+        ? review.narrative
+        : localReviewFallbackNarrative(plan, execution, truncationNote),
     createdAt: new Date().toISOString(),
     evidence,
     computedInsights,
@@ -234,6 +259,11 @@ export async function runAnalysisSession(
     createdAt: now0,
     updatedAt: now0,
   };
+  logger.info("session_started", {
+    requestId,
+    datasetId: dataset.id,
+    sessionId,
+  });
   let sequence = 0;
   const revisions: AnalysisRevision[] = [];
   const makeRevision = (over: {
@@ -260,6 +290,13 @@ export async function runAnalysisSession(
 
   let revision = makeRevision({ plan, source: "initial" });
   revisions.push(revision);
+  logger.info("revision_started", {
+    requestId,
+    datasetId: dataset.id,
+    sessionId,
+    revisionId: revision.id,
+    source: revision.source,
+  });
 
   // 3. review 循环
   let review: import("@/lib/types").AnalysisReview | null = null;
@@ -271,9 +308,43 @@ export async function runAnalysisSession(
     hooks.onStage?.("executing", `正在执行分析任务（第 ${round + 1} 轮）`);
     const execution = await executePlan(revision.plan, context, {
       maxConcurrency: DEFAULT_CONCURRENCY,
-      onTaskStarted: (t) => hooks.onTaskStarted?.(t),
-      onTaskCompleted: (t, r) => hooks.onTaskCompleted?.(t, r),
-      onTaskFailed: (t, r) => hooks.onTaskFailed?.(t, r),
+      onTaskStarted: (t) => {
+        logger.info("task_started", {
+          requestId,
+          datasetId: dataset.id,
+          sessionId,
+          revisionId: revision.id,
+          taskId: t.id,
+          operator: t.operator,
+        });
+        hooks.onTaskStarted?.(t);
+      },
+      onTaskCompleted: (t, r) => {
+        logger.info("task_completed", {
+          requestId,
+          datasetId: dataset.id,
+          sessionId,
+          revisionId: revision.id,
+          taskId: t.id,
+          operator: t.operator,
+          durationMs: r.durationMs,
+          status: r.status,
+        });
+        hooks.onTaskCompleted?.(t, r);
+      },
+      onTaskFailed: (t, r) => {
+        logger.warn("task_failed", {
+          requestId,
+          datasetId: dataset.id,
+          sessionId,
+          revisionId: revision.id,
+          taskId: t.id,
+          operator: t.operator,
+          durationMs: r.durationMs,
+          status: r.status,
+        });
+        hooks.onTaskFailed?.(t, r);
+      },
     });
     revision.execution = execution;
     lastExecution = execution;
@@ -296,6 +367,12 @@ export async function runAnalysisSession(
 
     if (reviewOk && review && review.status === "approved") break;
     if (reviewOk && review && review.status === "needs_user_input") {
+      logger.info("review_needs_user_input", {
+        requestId,
+        datasetId: dataset.id,
+        sessionId,
+        revisionId: revision.id,
+      });
       hooks.onQuestion?.(review.questionsForUser);
       session.status = "needs_user_input";
       break;
@@ -329,6 +406,20 @@ export async function runAnalysisSession(
         parentRevisionId: revision.id,
       });
       revisions.push(revision);
+      logger.info("review_requested_revision", {
+        requestId,
+        datasetId: dataset.id,
+        sessionId,
+        revisionId: revision.id,
+        round: round + 1,
+      });
+      logger.info("revision_started", {
+        requestId,
+        datasetId: dataset.id,
+        sessionId,
+        revisionId: revision.id,
+        source: revision.source,
+      });
       hooks.onRevision?.(revision);
     } else {
       unresolvedReview = Boolean(review?.status === "revise");
@@ -370,6 +461,21 @@ export async function runAnalysisSession(
   // 5. persist（先写 Revision，最后原子激活 Session，避免 activeRevisionId 悬空）
   for (const r of revisions) await saveRevision(dataset.id, sessionId, r);
   await saveSession(dataset.id, session);
+
+  logger.info("revision_activated", {
+    requestId,
+    datasetId: dataset.id,
+    sessionId,
+    revisionId: revision.id,
+  });
+  logger.info("session_completed", {
+    requestId,
+    datasetId: dataset.id,
+    sessionId,
+    revisionId: revision.id,
+    status: session.status,
+    provider: finalResult.provider,
+  });
 
   hooks.onRevision?.(revision);
   hooks.onFinal?.(finalResult);

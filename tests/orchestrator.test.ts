@@ -107,7 +107,22 @@ function mockReview(status: "approved" | "revise" | "needs_user_input"): Analysi
             intentSummary: "补充完成率",
             removeTasks: [],
             updateTasks: [],
-            addTasks: [task({ id: "t2", operator: "ratio", metrics: ["业务收入", "目标收入"] })],
+            addTasks: [
+              task({
+                id: "t2",
+                operator: "ratio",
+                metrics: ["业务收入", "目标收入"],
+                formula: {
+                  outputField: "完成率",
+                  expression: {
+                    op: "safe_divide",
+                    numerator: { op: "field", field: "业务收入" },
+                    denominator: { op: "field", field: "目标收入" },
+                    whenZero: "null",
+                  },
+                },
+              }),
+            ],
             dashboardChanges: { removeItems: [], updateItems: [] },
             userHardConstraints: [],
             explanation: "补完成率",
@@ -223,6 +238,7 @@ describe("runAnalysisSession - SPEC 14.2 / 24.6", () => {
     expect(r.finalResult.reviewStatus).toBe("unavailable");
     expect(r.finalResult.warnings?.some((w) => w.includes("终审不可用"))).toBe(true);
     expect(r.finalResult.charts.length).toBeGreaterThan(0);
+    expect(r.finalResult.narrative).toContain("本地确定性引擎");
   });
 
   it("事件顺序：stage(planning) → plan → task_started → task_completed → review → final", async () => {

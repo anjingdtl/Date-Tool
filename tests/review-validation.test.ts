@@ -102,4 +102,14 @@ describe("validateReview - SPEC 15.4 / 22.6", () => {
     const r = validateReview(rv, { plan: plan(), execution: execution(["ev1"]) });
     expect(r.issues.some((i) => i.code === "DANGLING_TASK")).toBe(true);
   });
+
+  it("包含数值的 finding 没有 Evidence → error", () => {
+    const rv = review([]);
+    rv.findings[0].statement = "收入增长 12.5%";
+    const r = validateReview(rv, { plan: plan(), execution: execution(["ev1"]) });
+    expect(r.ok).toBe(false);
+    expect(
+      r.issues.some((issue) => issue.code === "NUMERIC_FINDING_WITHOUT_EVIDENCE"),
+    ).toBe(true);
+  });
 });

@@ -2,6 +2,7 @@ export interface TaskStatusItem {
   id: string;
   title: string;
   status: "running" | "success" | "failed";
+  message?: string;
 }
 
 export default function AnalysisTaskStatus({ tasks }: { tasks: TaskStatusItem[] }) {
@@ -12,7 +13,14 @@ export default function AnalysisTaskStatus({ tasks }: { tasks: TaskStatusItem[] 
       <div className="agent-task-list">
         {tasks.map((task) => (
           <div className="row spread" key={task.id}>
-            <span>{task.title || task.id}</span>
+            <span>
+              {task.title || task.id}
+              {task.message && (
+                <span className="muted" style={{ display: "block", fontSize: 12 }}>
+                  {task.message}
+                </span>
+              )}
+            </span>
             <span className={`badge ${task.status === "running" ? "muted" : ""}`}>
               {task.status === "running" ? "执行中" : task.status === "success" ? "已完成" : "失败"}
             </span>

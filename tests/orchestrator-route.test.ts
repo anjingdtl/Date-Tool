@@ -1,15 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const state = vi.hoisted(() => ({ fail: false }));
+const state = vi.hoisted(() => ({ fail: false, llmEnabled: false }));
 
 vi.mock("@/lib/store", () => ({
   getDataset: vi.fn(),
   updateAnalysis: vi.fn(async () => {}),
   isValidDatasetId: vi.fn(() => true),
   setDatasetStatus: vi.fn(async () => null),
+  getUnderstanding: vi.fn(async () => null),
 }));
 vi.mock("@/lib/analyzer", () => ({ analyzeDataset: vi.fn() }));
+vi.mock("@/lib/llm-config", () => ({
+  getActiveLLMConfig: vi.fn(async () => ({
+    enabled: state.llmEnabled,
+    provider: "test",
+    baseUrl: "https://example.com/v1",
+    apiKey: state.llmEnabled ? "key" : "",
+    model: "test",
+  })),
+}));
 
 import { POST } from "@/app/api/analyze/route";
 import { analyzeDataset } from "@/lib/analyzer";
@@ -18,11 +28,11 @@ import type { FinalAnalysisResult } from "@/lib/types";
 
 const datasetId = "88888888-8888-4888-8888-888888888888";
 
-function request(): NextRequest {
+function request(forceLocal = false): NextRequest {
   return new NextRequest("http://localhost/api/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ datasetId, userGoal: "关注收入" }),
+    body: JSON.stringify({ datasetId, userGoal: "关注收入", forceLocal }),
   });
 }
 
@@ -33,6 +43,7 @@ async function events(response: Response): Promise<string[]> {
 
 beforeEach(() => {
   state.fail = false;
+  state.llmEnabled = false;
   vi.mocked(getDataset).mockResolvedValue({ id: datasetId, status: "ready" } as never);
   vi.mocked(analyzeDataset).mockReset();
   vi.mocked(analyzeDataset).mockImplementation(async (_dataset, _requestId, hooks) => {
@@ -83,5 +94,26 @@ describe("/api/analyze 编排 SSE", () => {
     expect(sequence.at(-1)).toBe("error");
     expect(sequence).not.toContain("final");
     expect(sequence).not.toContain("done");
+  });
+
+  it("LLM 已启用但理解未确认时阻断默认编排", async () => {
+    state.llmEnabled = true;
+    const response = await POST(request());
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("AI 数据理解");
+    expect(analyzeDataset).not.toHaveBeenCalled();
+  });
+
+  it("用户明确选择本地模式时可绕过 Understanding", async () => {
+    state.llmEnabled = true;
+    const response = await POST(request(true));
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(analyzeDataset).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      expect.any(Object),
+      expect.objectContaining({ forceLocal: true }),
+    );
   });
 });

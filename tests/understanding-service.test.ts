@@ -257,6 +257,8 @@ describe("apply-understanding - 用户修正（SPEC 10.5）", () => {
     expect(
       resolved.fields.find((f) => f.field === "用户数")?.measureBehavior,
     ).toBe("stock");
+    expect(resolved.fields.find((f) => f.field === "用户数")?.source).toBe("user");
+    expect(resolved.status).toBe("ready_for_confirmation");
   });
 
   it("confirmUnderstanding 置 confirmed + confirmedAt", () => {

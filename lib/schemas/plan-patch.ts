@@ -5,6 +5,8 @@ import {
   DashboardSectionPlanSchema,
 } from "./analysis-plan";
 import {
+  DatasetKindSchema,
+  TableShapeSchema,
   FieldUnderstandingSchema,
   FieldRelationshipSchema,
   DerivedMetricSuggestionSchema,
@@ -17,6 +19,12 @@ import {
  */
 
 export const UnderstandingPatchSchema = z.object({
+  datasetKind: DatasetKindSchema.optional(),
+  tableShape: TableShapeSchema.optional(),
+  businessDescription: z.string().optional(),
+  grainDescription: z.string().optional(),
+  rowMeaning: z.string().optional(),
+  selectedSheets: z.array(z.string().min(1)).optional(),
   fields: z
     .array(
       z.object({

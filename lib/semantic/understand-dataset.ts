@@ -15,6 +15,7 @@
 import { chatJSON } from "@/lib/llm";
 import { getActiveLLMConfig } from "@/lib/llm-config";
 import { logger } from "@/lib/logger";
+import { readSettings } from "@/lib/settings";
 import {
   validateLLMUnderstanding,
   type LLMUnderstandingParsed,
@@ -107,8 +108,17 @@ export async function understandDataset(
   requestId: string,
   options: UnderstandOptions = {},
 ): Promise<UnderstandResult> {
+  const settings = await readSettings();
   const context = buildDataContext(ds, {
     userDescription: options.userDescription,
+    sendRowSamples: settings.privacy.sendRowSamples,
+  });
+  logger.info("data_context_built", {
+    requestId,
+    datasetId: ds.id,
+    rowCount: context.rowCount,
+    storedRowCount: context.storedRowCount,
+    truncated: context.tokenBudget.truncated,
   });
 
   const llmConfig = await getActiveLLMConfig();

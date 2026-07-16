@@ -87,6 +87,19 @@ describe("PlanPatch 影响分析", () => {
     expect(impact.reusedTaskIds).toEqual(["t1", "t2"]);
   });
 
+  it("纠正数据集类型或行粒度会要求重建计划并重算全部任务", () => {
+    const base = plan();
+    const p = patch({
+      understandingPatch: {
+        datasetKind: "transaction",
+        grainDescription: "每行是一笔交易",
+      },
+    });
+    const impact = analyzePatchImpact(base, base, p);
+    expect(impact.requiresPlanRebuild).toBe(true);
+    expect(new Set(impact.affectedTaskIds)).toEqual(new Set(["t1", "t2"]));
+  });
+
   it("字段语义修正重算引用该字段的任务和下游", () => {
     const base = plan();
     const p = patch({

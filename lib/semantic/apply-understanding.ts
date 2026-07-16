@@ -44,11 +44,20 @@ export function resolveAmbiguity(
   ambiguityId: string,
   fieldChanges: FieldChange[],
 ): DatasetUnderstanding {
+  if (!understanding.ambiguities.some((a) => a.id === ambiguityId)) {
+    throw new Error(`待处理歧义不存在：${ambiguityId}`);
+  }
   const patched = applyFieldUnderstandingChanges(understanding, fieldChanges);
   const ambiguities = patched.ambiguities.map((a) =>
     a.id === ambiguityId ? { ...a, blocking: false } : a,
   );
-  return { ...patched, ambiguities };
+  return {
+    ...patched,
+    ambiguities,
+    status: ambiguities.some((a) => a.blocking)
+      ? "needs_user_input"
+      : "ready_for_confirmation",
+  };
 }
 
 /** 是否存在未解除的 blocking ambiguity（SPEC 10.5：阻断默认 LLM 编排） */

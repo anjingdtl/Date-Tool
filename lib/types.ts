@@ -844,6 +844,12 @@ export interface AnalysisReview {
 
 /** 理解层 Patch（SPEC 16.2） */
 export interface UnderstandingPatch {
+  datasetKind?: DatasetKind;
+  tableShape?: TableShape;
+  businessDescription?: string;
+  grainDescription?: string;
+  rowMeaning?: string;
+  selectedSheets?: string[];
   fields?: Array<{
     field: string;
     changes: Partial<FieldUnderstanding>;

@@ -91,7 +91,7 @@ DatasetStatus 只表达数据集外层状态，不承载全部编排阶段。
 | `lib/parse.ts` | CSV/Excel 解析、物理类型候选、原始/存储行数 |
 | `lib/normalize.ts` | 数值、日期、布尔标准化；确认后按最终物理配置重规范化 |
 | `lib/quality.ts` | 质量报告、截断、混合类型、非法日期/数值等警告 |
-| `lib/semantic/build-data-context.ts` | 客观上下文、可复现采样、统计和 token budget |
+| `lib/semantic/build-data-context.ts` | 客观上下文、全行 SHA-256、可复现采样、统计、隐私开关和 token budget |
 | `lib/semantic/detect-sensitive.ts` | 敏感字段识别与同上下文稳定掩码 |
 | `lib/semantic/understand-dataset.ts` | LLM 数据理解、Schema 修复循环与失败状态 |
 | `lib/semantic/apply-understanding.ts` | 用户字段修正、歧义处理和确认；用户修正标记 `source=user` |
@@ -145,7 +145,7 @@ DatasetStatus 只表达数据集外层状态，不承载全部编排阶段。
 - `lib/orchestrator/run-analysis-session.ts` 负责首次 Plan → Execute → Review → Finalize。
 - `lib/orchestrator/apply-user-feedback.ts` 负责反馈 Patch → 增量 Execute → Review → 激活新 Revision。
 
-`provider` 保持 `local | local+llm` 以兼容旧 UI；`analysisMode` 区分 `rule_fallback | llm_orchestrated`。
+`provider` 保持 `local | local+llm` 以兼容旧 UI；`analysisMode` 区分 `rule_fallback | llm_orchestrated`。HTTP 主入口在 LLM 已启用时要求已确认 Understanding；本地规则模式必须由无 LLM 配置自动进入，或由用户显式选择。兼容门面仍会在编排内部故障时保留确定性本地结果。
 
 ## 5. 存储、一致性与迁移
 
@@ -187,8 +187,10 @@ DatasetStatus 只表达数据集外层状态，不承载全部编排阶段。
 
 - 禁止 `eval`、`new Function`、任意脚本、任意 SQL、文件/网络工具调用。
 - 单元格、字段名和 Sheet 名均视为不可信数据；Understanding Prompt 明确执行提示注入隔离。
-- 默认向 LLM 发送统计和最多 40 条脱敏样本，不发送完整原始表。
-- 终审输入是任务摘要、裁剪后的聚合结果、Evidence、图表草案和 warning。
+- 默认向 LLM 发送统计和最多 40 条脱敏样本，不发送完整原始表；设置页可关闭所有行样本发送。
+- 字段样例、代表值、Top 值和行样本统一脱敏；token budget 超限按 anomaly → boundary → ordinary sample 顺序裁剪并记录。
+- 终审输入是任务摘要、裁剪后的聚合结果、包含计算结果的 Evidence、图表草案和 warning；identifier 结果会二次裁剪。
+- LLM 请求有超时、输出 token 上限和响应 Schema；供应商错误正文不会写入日志或返回给客户端。
 - API Key 不进入日志、响应、Evidence、Session 或 Revision。
 - 用户反馈最长 4000 字符；失败 Patch 不写理解、不保存 Revision、不切 activeRevisionId。
 - 相关性不得描述为因果，统计异常不得直接断言为业务错误，数据截断必须贯穿全链路。

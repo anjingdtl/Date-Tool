@@ -65,6 +65,13 @@ export function applyPlanPatch(
   for (const metric of up.derivedMetricsToAdd ?? []) metricMap.set(metric.id, metric);
   nextUnderstanding = {
     ...nextUnderstanding,
+    datasetKind: up.datasetKind ?? nextUnderstanding.datasetKind,
+    tableShape: up.tableShape ?? nextUnderstanding.tableShape,
+    businessDescription:
+      up.businessDescription ?? nextUnderstanding.businessDescription,
+    grainDescription: up.grainDescription ?? nextUnderstanding.grainDescription,
+    rowMeaning: up.rowMeaning ?? nextUnderstanding.rowMeaning,
+    selectedSheets: up.selectedSheets ?? nextUnderstanding.selectedSheets,
     relationships: [...relationMap.values()],
     derivedMetrics: [...metricMap.values()],
     status: "confirmed",

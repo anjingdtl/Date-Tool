@@ -41,6 +41,11 @@ export async function PUT(req: NextRequest) {
 
     const patch: DeepPartial<AppSettings> = {};
     if (parsed.data.theme) patch.theme = parsed.data.theme;
+    if (parsed.data.privacy?.sendRowSamples !== undefined) {
+      patch.privacy = {
+        sendRowSamples: parsed.data.privacy.sendRowSamples,
+      };
+    }
 
     if (parsed.data.llm) {
       const llmIn = parsed.data.llm;
@@ -109,10 +114,11 @@ export async function POST() {
         signal: ctrl.signal,
       });
       if (res.ok) return ok({ ok: true, message: `连通正常（${res.status}）` });
-      const text = await res.text().catch(() => "");
+      // 供应商错误正文可能包含内部追踪信息或回显内容，不进入客户端响应。
+      await res.body?.cancel().catch(() => undefined);
       return ok({
         ok: false,
-        message: `LLM 返回 ${res.status}: ${text.slice(0, 160)}`,
+        message: `LLM 返回 ${res.status}，请检查模型、Base URL、额度与密钥权限`,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

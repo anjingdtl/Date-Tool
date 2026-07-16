@@ -59,7 +59,8 @@ export const compareTool: ToolDefinition = {
     >();
     for (const r of filtered) {
       const keyParts = dims.map((d) => String(r[d] ?? ""));
-      const key = keyParts.join("");
+      // 使用带类型信息的结构化键，避免 ["ab", "c"] 与 ["a", "bc"] 碰撞。
+      const key = JSON.stringify(keyParts);
       let g = groups.get(key);
       if (!g) {
         g = { keyParts, vals: {} };

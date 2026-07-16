@@ -65,7 +65,17 @@ export async function createAnalysisPlan(
     };
   }
 
-  const baseInput = buildPlanningInput(understanding, dataset, options.userGoal);
+  const baseInput = buildPlanningInput(
+    understanding,
+    dataset,
+    options.userGoal,
+    options.userHardConstraints,
+  );
+  logger.info("plan_started", {
+    requestId,
+    datasetId: dataset.id,
+    understandingId: understanding.id,
+  });
   const ctx: PlanValidationContext = {
     dataset,
     understanding,
@@ -122,9 +132,17 @@ export async function createAnalysisPlan(
     if (validation.ok && !tooMany) {
       logger.info("plan_generated", {
         requestId,
+        datasetId: dataset.id,
         attempt,
         taskCount: plan.tasks.length,
       });
+      if (attempt > 0) {
+        logger.info("plan_repaired", {
+          requestId,
+          datasetId: dataset.id,
+          attempt,
+        });
+      }
       return { ok: true, plan, issues: validation.issues, attempts: attempt };
     }
 

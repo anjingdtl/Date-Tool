@@ -40,6 +40,18 @@ export const rankingTool: ToolDefinition = {
         message: "ranking 至少 1 个指标",
         level: "error",
       });
+    if (!task.aggregation)
+      issues.push({
+        code: "NO_AGGREGATION",
+        message: "ranking 必须明确聚合方式",
+        level: "error",
+      });
+    if (!task.sort || !task.metrics.includes(task.sort.field))
+      issues.push({
+        code: "NO_METRIC_SORT",
+        message: "ranking 必须明确使用某个指标排序",
+        level: "error",
+      });
     return { ok: !issues.some((i) => i.level === "error"), issues };
   },
   async execute(task, ctx) {

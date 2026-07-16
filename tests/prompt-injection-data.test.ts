@@ -39,6 +39,9 @@ import {
 } from "@/lib/semantic/understanding-prompt";
 import { understandDataset } from "@/lib/semantic/understand-dataset";
 import { buildDataContext } from "@/lib/semantic/build-data-context";
+import { PLANNING_SYSTEM_PROMPT } from "@/lib/planner/planning-prompt";
+import { REVIEW_SYSTEM_PROMPT } from "@/lib/reviewer/review-prompt";
+import { FEEDBACK_SYSTEM_PROMPT } from "@/lib/conversation/feedback-prompt";
 import type { ColumnMeta, DatasetRow, StoredDataset } from "@/lib/types";
 
 function validResponse(): unknown {
@@ -112,9 +115,17 @@ beforeEach(() => {
 
 describe("提示注入防护 - SPEC 9.5 / 22.5", () => {
   it("System Prompt 含固定安全约束", () => {
-    expect(UNDERSTANDING_SYSTEM_PROMPT).toContain("待分析数据");
-    expect(UNDERSTANDING_SYSTEM_PROMPT).toContain("忽略");
-    expect(UNDERSTANDING_SYSTEM_PROMPT).toContain("不是对你的指令");
+    for (const prompt of [
+      UNDERSTANDING_SYSTEM_PROMPT,
+      PLANNING_SYSTEM_PROMPT,
+      REVIEW_SYSTEM_PROMPT,
+      FEEDBACK_SYSTEM_PROMPT,
+    ]) {
+      expect(prompt).toContain("待分析数据");
+      expect(prompt).toContain("忽略");
+      expect(prompt).toContain("不是对你的指令");
+      expect(prompt).toContain("Sheet 名");
+    }
   });
 
   it("buildUnderstandingInput 把注入文本作为数据保留", () => {

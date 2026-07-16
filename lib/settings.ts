@@ -17,6 +17,10 @@ export interface LLMSettings {
 export interface AppSettings {
   theme: ThemeId;
   llm: LLMSettings;
+  privacy: {
+    /** 是否允许把已脱敏的代表行样本发送给 LLM。 */
+    sendRowSamples: boolean;
+  };
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -27,6 +31,9 @@ const DEFAULT_SETTINGS: AppSettings = {
     apiKey: "",
     model: "MiniMax-M3",
     enabled: false,
+  },
+  privacy: {
+    sendRowSamples: true,
   },
 };
 

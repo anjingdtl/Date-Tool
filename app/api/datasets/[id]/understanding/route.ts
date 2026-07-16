@@ -141,6 +141,13 @@ export async function PUT(
       status: updated.status,
       confirm: !!body.confirm,
     });
+    if (body.confirm) {
+      logger.info("understanding_confirmed", {
+        requestId,
+        datasetId: params.id,
+        understandingId: updated.id,
+      });
+    }
 
     return ok({ understanding: updated });
   } catch (err) {

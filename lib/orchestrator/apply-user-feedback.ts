@@ -5,6 +5,7 @@ import { interpretUserFeedback } from "@/lib/conversation/interpret-user-feedbac
 import { nextRevisionSequence } from "@/lib/conversation/revision-history";
 import { executePlan } from "@/lib/executor/execute-plan";
 import { validateAnalysisPlan } from "@/lib/planner/validate-analysis-plan";
+import { createAnalysisPlan } from "@/lib/planner/create-analysis-plan";
 import { reviewExecution } from "@/lib/reviewer/review-execution";
 import { validateDatasetUnderstanding } from "@/lib/schemas/understanding";
 import {
@@ -31,6 +32,7 @@ import {
   MAX_REVISIONS_PER_SESSION,
 } from "./limits";
 import { finalizeAnalysisResult } from "./run-analysis-session";
+import { logger } from "@/lib/logger";
 
 function id(prefix: string): string {
   return `${prefix}_${randomUUID().slice(0, 12)}`;
@@ -81,7 +83,29 @@ export async function applyUserFeedback(
     throw new Error(`字段语义修改非法：${understandingValidation.error}`);
   }
   let understanding = understandingValidation.data as DatasetUnderstanding;
+  const availableSheets = new Set([dataset.sheetName ?? "Sheet1"]);
+  if (understanding.selectedSheets.some((sheet) => !availableSheets.has(sheet))) {
+    throw new Error("修改要求引用了当前数据集中不存在的 Sheet，请先重新导入并选择工作表");
+  }
   let plan = withPlanIdentity(applied.plan);
+  let impact = analyzePatchImpact(baseRevision.plan, plan, patch);
+  if (impact.requiresPlanRebuild) {
+    hooks.onStage?.("planning", "语义基础发生变化，正在重建分析计划");
+    const rebuilt = await createAnalysisPlan(
+      understanding,
+      dataset,
+      requestId,
+      {
+        userGoal: patch.intentSummary,
+        userHardConstraints: patch.userHardConstraints,
+      },
+    );
+    if (!rebuilt.ok || !rebuilt.plan) {
+      throw new Error(rebuilt.error ?? "语义修改后无法重建分析计划");
+    }
+    plan = rebuilt.plan;
+    impact = analyzePatchImpact(baseRevision.plan, plan, patch);
+  }
   const validation = validateAnalysisPlan(plan, {
     dataset,
     understanding,
@@ -96,7 +120,6 @@ export async function applyUserFeedback(
     );
   }
 
-  const impact = analyzePatchImpact(baseRevision.plan, plan, patch);
   hooks.onStage?.(
     "feedback_impact",
     impact.presentationOnly
@@ -134,6 +157,13 @@ export async function applyUserFeedback(
 
   let revision = makeRevision("user", baseRevision.id, plan, understanding);
   newRevisions.push(revision);
+  logger.info("revision_started", {
+    requestId,
+    datasetId: dataset.id,
+    sessionId: input.session.id,
+    revisionId: revision.id,
+    source: revision.source,
+  });
   let priorExecution: PlanExecutionResult = baseRevision.execution;
   let affected = new Set(impact.affectedTaskIds);
   let review: import("@/lib/types").AnalysisReview | null = null;
@@ -157,9 +187,43 @@ export async function applyUserFeedback(
       maxConcurrency: DEFAULT_CONCURRENCY,
       taskIdsToExecute: affected,
       reuseResults: priorExecution.results,
-      onTaskStarted: (task) => hooks.onTaskStarted?.(task),
-      onTaskCompleted: (task, result) => hooks.onTaskCompleted?.(task, result),
-      onTaskFailed: (task, result) => hooks.onTaskFailed?.(task, result),
+      onTaskStarted: (task) => {
+        logger.info("task_started", {
+          requestId,
+          datasetId: dataset.id,
+          sessionId: input.session.id,
+          revisionId: revision.id,
+          taskId: task.id,
+          operator: task.operator,
+        });
+        hooks.onTaskStarted?.(task);
+      },
+      onTaskCompleted: (task, result) => {
+        logger.info("task_completed", {
+          requestId,
+          datasetId: dataset.id,
+          sessionId: input.session.id,
+          revisionId: revision.id,
+          taskId: task.id,
+          operator: task.operator,
+          durationMs: result.durationMs,
+          status: result.status,
+        });
+        hooks.onTaskCompleted?.(task, result);
+      },
+      onTaskFailed: (task, result) => {
+        logger.warn("task_failed", {
+          requestId,
+          datasetId: dataset.id,
+          sessionId: input.session.id,
+          revisionId: revision.id,
+          taskId: task.id,
+          operator: task.operator,
+          durationMs: result.durationMs,
+          status: result.status,
+        });
+        hooks.onTaskFailed?.(task, result);
+      },
     });
     revision.execution = execution;
     lastExecution = execution;
@@ -198,7 +262,11 @@ export async function applyUserFeedback(
     };
     const next = applyPlanPatch(revision.plan, understanding, boundedPatch);
     const nextPlan = withPlanIdentity(next.plan);
-    const nextValidation = validateAnalysisPlan(nextPlan, { dataset, understanding: next.understanding });
+    const nextValidation = validateAnalysisPlan(nextPlan, {
+      dataset,
+      understanding: next.understanding,
+      userHardConstraints: patch.userHardConstraints,
+    });
     if (!nextValidation.ok) {
       unresolvedReview = true;
       break;
@@ -215,6 +283,20 @@ export async function applyUserFeedback(
     plan = nextPlan;
     revision = makeRevision("review", revision.id, plan, understanding);
     newRevisions.push(revision);
+    logger.info("review_requested_revision", {
+      requestId,
+      datasetId: dataset.id,
+      sessionId: input.session.id,
+      revisionId: revision.id,
+      round: round + 1,
+    });
+    logger.info("revision_started", {
+      requestId,
+      datasetId: dataset.id,
+      sessionId: input.session.id,
+      revisionId: revision.id,
+      source: revision.source,
+    });
   }
 
   if (!lastExecution) throw new Error("修改后未产生执行结果");
@@ -246,6 +328,12 @@ export async function applyUserFeedback(
     await saveUnderstanding(dataset.id, understanding);
   }
   await saveSession(dataset.id, session);
+  logger.info("revision_activated", {
+    requestId,
+    datasetId: dataset.id,
+    sessionId: session.id,
+    revisionId: revision.id,
+  });
   hooks.onRevision?.(revision);
   hooks.onFinal?.(finalResult);
   return { session, activeRevision: revision, finalResult, impact };

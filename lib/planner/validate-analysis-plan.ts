@@ -15,6 +15,7 @@ import type {
   StoredDataset,
 } from "@/lib/types";
 import { validateFormulaAST } from "@/lib/executor/formula-engine";
+import { getTool } from "@/lib/executor/registry";
 import { detectCycle } from "./plan-dependencies";
 
 export interface PlanValidationIssue {
@@ -112,10 +113,19 @@ export function validateAnalysisPlan(
 
   for (const t of plan.tasks) {
     validateTaskFields(t, physical, semantic, allFieldNames, taskIds, issues);
-    validateTaskAggregation(t, physical, semantic, issues);
+    validateTaskAggregation(
+      t,
+      physical,
+      semantic,
+      ctx.userHardConstraints ?? [],
+      issues,
+    );
+    validateOperatorContract(t, ctx, issues);
+    validateFilterTypes(t, physical, issues);
   }
 
   validateDashboard(plan, taskIds, physical, issues);
+  validateHardConstraints(plan, ctx.userHardConstraints ?? [], issues);
 
   return { ok: !issues.some((i) => i.level === "error"), issues };
 }
@@ -180,11 +190,22 @@ function validateTaskFields(
         message: fi.message,
         level: "error",
       });
+    for (const field of collectFormulaFields(t.formula.expression)) {
+      const column = physical.get(field);
+      if (column && column.type !== "number") {
+        issues.push({
+          code: "FORMULA_NON_NUMERIC_FIELD",
+          taskId: t.id,
+          message: `任务「${t.id}」的公式引用非数值字段「${field}」`,
+          level: "error",
+        });
+      }
+    }
   }
 
   // 规则 15：between filter 需数值数组
   for (const fl of t.filters) {
-    if (fl.operator === "between" && (!Array.isArray(fl.value) || fl.value.length < 2))
+    if (fl.operator === "between" && (!Array.isArray(fl.value) || fl.value.length !== 2))
       issues.push({
         code: "BAD_BETWEEN",
         taskId: t.id,
@@ -198,6 +219,7 @@ function validateTaskAggregation(
   t: AnalysisTask,
   physical: Map<string, ColumnMeta>,
   semantic: Map<string, FieldUnderstanding>,
+  userHardConstraints: string[],
   issues: PlanValidationIssue[],
 ): void {
   const agg = t.aggregation;
@@ -209,7 +231,7 @@ function validateTaskAggregation(
       code: "LAST_NEEDS_ORDER",
       taskId: t.id,
       message: `任务「${t.id}」使用 last 但无 time/sort，顺序不稳定`,
-      level: "warning",
+      level: "error",
     });
 
   for (const m of t.metrics) {
@@ -246,7 +268,19 @@ function validateTaskAggregation(
         level: "error",
       });
     // 规则 12：stock 跨时间禁 sum
-    if (t.operator === "timeseries" && agg === "sum" && sem?.measureBehavior === "stock")
+    const stockSumOverridden = userHardConstraints.some((constraint) => {
+      const text = constraint.toLowerCase();
+      return (
+        text.includes(m.toLowerCase()) &&
+        /(允许|使用|按).*(sum|求和|累加)/i.test(text)
+      );
+    });
+    if (
+      t.operator === "timeseries" &&
+      agg === "sum" &&
+      sem?.measureBehavior === "stock" &&
+      !stockSumOverridden
+    )
       issues.push({
         code: "STOCK_NO_TIMESERIES_SUM",
         taskId: t.id,
@@ -256,13 +290,147 @@ function validateTaskAggregation(
   }
 }
 
+function validateOperatorContract(
+  task: AnalysisTask,
+  ctx: PlanValidationContext,
+  issues: PlanValidationIssue[],
+): void {
+  const tool = getTool(task.operator);
+  if (!tool) {
+    issues.push({
+      code: "UNKNOWN_OPERATOR",
+      taskId: task.id,
+      message: `任务「${task.id}」使用未注册操作符「${task.operator}」`,
+      level: "error",
+    });
+    return;
+  }
+  const validated = tool.validate(task, {
+    dataset: ctx.dataset,
+    understanding: ctx.understanding,
+    priorResults: {},
+    requestId: "plan-validation",
+  });
+  for (const issue of validated.issues) {
+    issues.push({
+      code: `OPERATOR_${issue.code}`,
+      taskId: task.id,
+      message: `任务「${task.id}」：${issue.message}`,
+      level: issue.level,
+    });
+  }
+
+  if (task.operator === "ratio" && task.formula) {
+    const fields = collectFormulaFields(task.formula.expression);
+    for (const field of fields) {
+      const physical = ctx.dataset.columns.find((column) => column.name === field);
+      if (physical && physical.type !== "number") {
+        issues.push({
+          code: "RATIO_NON_NUMERIC_FIELD",
+          taskId: task.id,
+          message: `任务「${task.id}」的比率公式引用非数值字段「${field}」`,
+          level: "error",
+        });
+      }
+    }
+  }
+}
+
+function collectFormulaFields(
+  expression: import("@/lib/types").FormulaExpression,
+): Set<string> {
+  const fields = new Set<string>();
+  const visit = (node: import("@/lib/types").FormulaExpression) => {
+    if (node.op === "field") fields.add(node.field);
+    else if (
+      node.op === "add" ||
+      node.op === "subtract" ||
+      node.op === "multiply" ||
+      node.op === "divide"
+    ) {
+      visit(node.left);
+      visit(node.right);
+    } else if (node.op === "safe_divide") {
+      visit(node.numerator);
+      visit(node.denominator);
+    } else if (node.op === "abs" || node.op === "round") {
+      visit(node.value);
+    }
+  };
+  visit(expression);
+  return fields;
+}
+
+function valueCompatible(value: unknown, column: ColumnMeta): boolean {
+  if (value === null || value === undefined) return true;
+  if (column.type === "number") {
+    return typeof value === "number" && Number.isFinite(value);
+  }
+  if (column.type === "boolean") return typeof value === "boolean";
+  if (column.type === "date") {
+    return (
+      (typeof value === "string" || value instanceof Date) &&
+      Number.isFinite(new Date(value).getTime())
+    );
+  }
+  return typeof value === "string";
+}
+
+function validateFilterTypes(
+  task: AnalysisTask,
+  physical: Map<string, ColumnMeta>,
+  issues: PlanValidationIssue[],
+): void {
+  for (const filter of task.filters) {
+    const column = physical.get(filter.field);
+    if (!column) continue;
+    const values = Array.isArray(filter.value) ? filter.value : [filter.value];
+    if (["in", "not_in", "between"].includes(filter.operator) && !Array.isArray(filter.value)) {
+      issues.push({
+        code: "FILTER_VALUE_TYPE",
+        taskId: task.id,
+        message: `任务「${task.id}」的 ${filter.operator} 筛选值必须是数组`,
+        level: "error",
+      });
+      continue;
+    }
+    if (filter.operator === "between" && values.length !== 2) continue;
+    if (filter.operator === "contains" && column.type !== "string") {
+      issues.push({
+        code: "FILTER_OPERATOR_TYPE",
+        taskId: task.id,
+        message: `任务「${task.id}」不能对非文本字段「${filter.field}」使用 contains`,
+        level: "error",
+      });
+    }
+    if (!values.every((value) => valueCompatible(value, column))) {
+      issues.push({
+        code: "FILTER_VALUE_TYPE",
+        taskId: task.id,
+        message: `任务「${task.id}」的筛选值与字段「${filter.field}」物理类型不兼容`,
+        level: "error",
+      });
+    }
+  }
+}
+
 function validateDashboard(
   plan: AnalysisPlan,
   taskIds: Set<string>,
   physical: Map<string, ColumnMeta>,
   issues: PlanValidationIssue[],
 ): void {
+  const itemIds = new Set<string>();
   for (const item of plan.dashboard.items) {
+    if (itemIds.has(item.id)) {
+      issues.push({
+        code: "DUPLICATE_DASHBOARD_ITEM_ID",
+        itemId: item.id,
+        message: `图表 ID「${item.id}」重复`,
+        level: "error",
+      });
+    }
+    itemIds.add(item.id);
     // 规则 2/19：图表引用任务存在，可见图表需有效任务
     if (!taskIds.has(item.taskId))
       issues.push({
@@ -288,8 +456,74 @@ function validateDashboard(
           code: "PIE_TOO_MANY_CATEGORIES",
           itemId: item.id,
           message: `饼图「${item.id}」类别 ${phys.distinctCount} 超过 ${PIE_MAX}，建议改 bar`,
-          level: "warning",
+          level: "error",
         });
+    }
+    if (task && !chartMatchesOutput(item.type, task.expectedOutput)) {
+      issues.push({
+        code: "CHART_OUTPUT_MISMATCH",
+        itemId: item.id,
+        message: `图表「${item.id}」类型 ${item.type} 与任务输出 ${task.expectedOutput} 不兼容`,
+        level: "error",
+      });
+    }
+  }
+  for (const section of plan.dashboard.sections) {
+    for (const itemId of section.itemIds) {
+      if (!itemIds.has(itemId)) {
+        issues.push({
+          code: "DANGLING_SECTION_ITEM",
+          itemId,
+          message: `看板分区「${section.id}」引用不存在的图表「${itemId}」`,
+          level: "error",
+        });
+      }
+    }
+  }
+}
+
+function chartMatchesOutput(
+  type: AnalysisPlan["dashboard"]["items"][number]["type"],
+  output: AnalysisTask["expectedOutput"],
+): boolean {
+  if (type === "table") return true;
+  if (type === "kpi") return output === "scalar";
+  if (type === "heatmap") return output === "matrix" || output === "category_table";
+  if (type === "scatter") return output === "records" || output === "category_table";
+  if (type === "line" || type === "area") return output === "series" || output === "category_table";
+  return output === "category_table" || output === "series";
+}
+
+function validateHardConstraints(
+  plan: AnalysisPlan,
+  constraints: string[],
+  issues: PlanValidationIssue[],
+): void {
+  const serialized = JSON.stringify(plan);
+  for (const constraint of constraints) {
+    const noPie = /(不要|不使用|禁止).*(饼图|pie)/i.test(constraint);
+    if (noPie && plan.dashboard.items.some((item) => item.type === "pie")) {
+      issues.push({
+        code: "USER_HARD_CONSTRAINT_VIOLATED",
+        message: `计划违反用户硬约束：「${constraint}」`,
+        level: "error",
+      });
+    }
+    const onlyValue = constraint.match(/只(?:看|保留|分析)\s*[「“\"]?([^「」“”\"，。；;]+)[」”\"]?/);
+    if (onlyValue && !serialized.includes(onlyValue[1].trim())) {
+      issues.push({
+        code: "USER_HARD_CONSTRAINT_VIOLATED",
+        message: `计划未落实用户硬约束：「${constraint}」`,
+        level: "error",
+      });
+    }
+    const maxCharts = constraint.match(/最多\s*(\d+)\s*张?图/);
+    if (maxCharts && plan.dashboard.items.filter((item) => item.visible).length > Number(maxCharts[1])) {
+      issues.push({
+        code: "USER_HARD_CONSTRAINT_VIOLATED",
+        message: `计划可见图表数违反用户硬约束：「${constraint}」`,
+        level: "error",
+      });
     }
   }
 }

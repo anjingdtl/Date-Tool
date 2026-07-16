@@ -107,12 +107,12 @@ describe("validateAnalysisPlan - SPEC 12.7 规则矩阵", () => {
     expect(r.issues.some((i) => i.code === "STOCK_NO_TIMESERIES_SUM")).toBe(true);
   });
 
-  it("last 无 time/sort → warning（不阻断）", () => {
+  it("last 无 time/sort → error（顺序不稳定，禁止执行）", () => {
     const p = validPlan([
       task({ metrics: ["业务收入"], aggregation: "last", time: undefined }),
     ]);
     const r = validateAnalysisPlan(p, ctx);
-    expect(r.ok).toBe(true); // warning 不阻断
+    expect(r.ok).toBe(false);
     expect(r.issues.some((i) => i.code === "LAST_NEEDS_ORDER")).toBe(true);
   });
 
@@ -161,6 +161,87 @@ describe("validateAnalysisPlan - SPEC 12.7 规则矩阵", () => {
     ]);
     const r = validateAnalysisPlan(p, ctx);
     expect(r.ok).toBe(false);
+  });
+
+  it("identifier 禁止 avg", () => {
+    const dataset = makeKpiDataset();
+    const understanding = makeKpiUnderstanding();
+    dataset.columns = dataset.columns.map((column) =>
+      column.name === "地市" ? { ...column, type: "number", role: "identifier" } : column,
+    );
+    understanding.fields = understanding.fields.map((field) =>
+      field.field === "地市" ? { ...field, role: "identifier" } : field,
+    );
+    const p = validPlan([task({ metrics: ["地市"], aggregation: "avg" })]);
+    const r = validateAnalysisPlan(p, { dataset, understanding });
+    expect(r.issues.some((issue) => issue.code === "IDENTIFIER_NO_SUM_AVG")).toBe(true);
+  });
+
+  it("ratio 公式引用非数值字段 → error", () => {
+    const p = validPlan([
+      task({
+        operator: "ratio",
+        metrics: ["业务收入", "地市"],
+        formula: {
+          outputField: "错误比率",
+          expression: {
+            op: "safe_divide",
+            numerator: { op: "field", field: "业务收入" },
+            denominator: { op: "field", field: "地市" },
+            whenZero: "null",
+          },
+        },
+      }),
+    ]);
+    const r = validateAnalysisPlan(p, ctx);
+    expect(r.issues.some((issue) => issue.code === "RATIO_NON_NUMERIC_FIELD")).toBe(true);
+  });
+
+  it("correlation 至少需要两个数值指标", () => {
+    const p = validPlan([
+      task({ operator: "correlation", dimensions: [], metrics: ["业务收入"], expectedOutput: "matrix" }),
+    ]);
+    const r = validateAnalysisPlan(p, ctx);
+    expect(r.issues.some((issue) => issue.code.includes("NEED_TWO_METRICS"))).toBe(true);
+  });
+
+  it("filter 值必须与字段物理类型兼容", () => {
+    const p = validPlan([
+      task({ filters: [{ field: "业务收入", operator: "gt", value: "一百" }] }),
+    ]);
+    const r = validateAnalysisPlan(p, ctx);
+    expect(r.issues.some((issue) => issue.code === "FILTER_VALUE_TYPE")).toBe(true);
+  });
+
+  it("pie 类别超过 8 时拒绝", () => {
+    const dataset = makeKpiDataset();
+    dataset.columns = dataset.columns.map((column) =>
+      column.name === "地市" ? { ...column, distinctCount: 20 } : column,
+    );
+    const p = validPlan();
+    p.dashboard.items[0].type = "pie";
+    const r = validateAnalysisPlan(p, { dataset, understanding: makeKpiUnderstanding() });
+    expect(r.ok).toBe(false);
+    expect(r.issues.some((issue) => issue.code === "PIE_TOO_MANY_CATEGORIES")).toBe(true);
+  });
+
+  it("图表类型必须与任务输出形态兼容", () => {
+    const p = validPlan();
+    p.dashboard.items[0].type = "kpi";
+    const r = validateAnalysisPlan(p, ctx);
+    expect(r.issues.some((issue) => issue.code === "CHART_OUTPUT_MISMATCH")).toBe(true);
+  });
+
+  it("已识别的用户硬约束不可违反", () => {
+    const p = validPlan();
+    p.dashboard.items[0].type = "pie";
+    const r = validateAnalysisPlan(p, {
+      ...ctx,
+      userHardConstraints: ["不要使用饼图"],
+    });
+    expect(
+      r.issues.some((issue) => issue.code === "USER_HARD_CONSTRAINT_VIOLATED"),
+    ).toBe(true);
   });
 });
 
