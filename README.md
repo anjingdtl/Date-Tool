@@ -24,7 +24,7 @@ Date-Tool 是一个本地优先的个人数据分析 Agent：拖入 Excel / CSV 
 
 ### Windows 一键启动
 
-双击根目录的 `start-dev.vbs`。它会清理 3000 端口、启动开发服务并打开浏览器；关闭所有 Date-Tool 页面后服务可自动退出。手动停止可运行 `stop-dev.bat`。
+双击根目录的 `start-dev.bat` 或 `start-dev.vbs`。两者都会清理 3000 端口、隐藏启动开发服务并自动打开浏览器；其中 BAT 会自动转交给 VBS 启动器。关闭所有 Date-Tool 页面后服务可自动退出。手动停止可运行 `stop-dev.bat`。
 
 开发日志写入 `logs/dev-server.log`。不要再对启动 bat 套外层重定向，否则 Windows 可能锁住日志文件。
 

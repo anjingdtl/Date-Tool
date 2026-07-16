@@ -31,6 +31,7 @@
 - LLM、计划或终审不可用时安全降级；本地新结果标记 `version=v0.3.0`、`analysisMode=rule_fallback`。
 - LLM 请求增加输出 token 上限；供应商错误正文不进入日志/客户端；四类 System Prompt 统一隔离字段名、Sheet 名和单元格提示注入。
 - 计划校验覆盖 20 类规则，并调用各注册工具参数校验；终审 Evidence 输入包含裁剪后的确定性结果，无 Evidence 的数值 finding 会被拒绝。
+- Windows 启动器修复：`start-dev.bat` 直接双击会转交隐藏 VBS，自动打开浏览器并避免留下开发终端；BAT 改为 ASCII 编码，消除代码页乱码命令。
 - 所有最终 `ComputedInsight` 只保留有效 Evidence 引用；终审循环超限会标记 `approved_with_warnings`。
 - Feedback 最长 4000 字符；API Key、完整原始行和敏感原值不进入日志或持久化编排对象。
 

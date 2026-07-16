@@ -54,6 +54,7 @@
 - `npm run test`：50 个测试文件、525 个测试全部通过。
 - `npm run build`：Next.js 14.2.15 production build 通过，全部页面与 API Route 成功编译。
 - `npm run check`：整体通过。
+- Windows 启动冒烟：直接执行 `start-dev.bat` 返回码 0，隐藏启动 VBS，3000 端口就绪并触发浏览器打开。
 
 ## 4. 安全与确定性专项复核
 

@@ -1,17 +1,29 @@
 @echo off
+setlocal EnableExtensions DisableDelayedExpansion
+
+REM Direct double-clicks use the hidden VBS launcher, which waits for the
+REM server, opens the browser, and keeps the server lifecycle out of this
+REM console window. The VBS launcher passes /from-vbs to run this file.
+if /I not "%~1"=="/from-vbs" (
+    if exist "%~dp0start-dev.vbs" (
+        start "" /b wscript.exe "%~dp0start-dev.vbs"
+        exit /b 0
+    )
+)
+
+setlocal EnableDelayedExpansion
+
 REM ============================================================
 REM Date-Tool dev server launcher
-REM - Double-click to run (console window)
-REM - Or called silently by start-dev.vbs (hidden window)
+REM - Double-click delegates to start-dev.vbs (hidden window + browser)
+REM - Called with /from-vbs for the actual server process
 REM IMPORTANT: Do NOT outer-redirect this bat to the same log file.
 REM The bat writes logs\dev-server.log itself; double redirect locks
 REM the file on Windows and the server never starts.
 REM ============================================================
 
-setlocal EnableDelayedExpansion
-
-REM Windows 一键启动：启用「关闭 WebUI 自动关闭服务」
-REM 普通 npm run dev 不设此变量，默认关闭，避免开发调试意外退出
+REM The hidden launcher enables automatic shutdown after all WebUI sessions close.
+REM Normal npm run dev leaves this variable unset to avoid accidental exits.
 set "AUTO_SHUTDOWN_ENABLED=true"
 
 cd /d "%~dp0"
