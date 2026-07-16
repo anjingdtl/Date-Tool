@@ -5,6 +5,7 @@ import type {
   ComputedInsight,
   DatasetDetail,
   DatasetRow,
+  DatasetUnderstanding,
   EChartsOption,
   PublicDataset,
   UploadResult,
@@ -238,6 +239,153 @@ export async function runAnalysis(
           break;
         case "error":
           hooks.onError?.(payload.message ?? "分析出错");
+          break;
+      }
+    } catch {
+      /* 忽略坏帧 */
+    }
+    curEvent = "";
+    curData = "";
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.startsWith("event:")) {
+        curEvent = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        curData = line.slice(5).trim();
+      } else if (line.trim() === "") {
+        dispatch();
+      }
+    }
+  }
+  dispatch();
+}
+
+/* ----------------------- v0.3：AI 数据理解 API（SPEC 18.1） ----------------------- */
+
+export interface UnderstandingResult {
+  understanding: DatasetUnderstanding | null;
+  hasUnderstanding: boolean;
+}
+
+/** GET /api/datasets/{id}/understanding */
+export async function getUnderstanding(
+  datasetId: string,
+): Promise<UnderstandingResult> {
+  const res = await fetch(`${BASE}/api/datasets/${datasetId}/understanding`);
+  return parse<UnderstandingResult>(res);
+}
+
+/** 字段级语义修改项（与服务端 FieldChange 对应） */
+export interface FieldUnderstandingChange {
+  field: string;
+  changes: Partial<DatasetUnderstanding["fields"][number]>;
+}
+
+/** PUT /api/datasets/{id}/understanding：合并用户修正 / 确认 */
+export async function updateUnderstanding(
+  datasetId: string,
+  body: {
+    fieldChanges?: FieldUnderstandingChange[];
+    ambiguityResolutions?: Array<{
+      ambiguityId: string;
+      fieldChanges?: FieldUnderstandingChange[];
+    }>;
+    confirm?: boolean;
+  },
+): Promise<{ understanding: DatasetUnderstanding }> {
+  const res = await fetch(`${BASE}/api/datasets/${datasetId}/understanding`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = `请求失败 (${res.status})`;
+    let details: unknown;
+    try {
+      const j = await res.json();
+      if (j?.detail) detail = j.detail;
+      if (j?.details) details = j.details;
+    } catch {
+      /* ignore */
+    }
+    const e = new Error(detail) as Error & { details?: unknown };
+    if (details !== undefined) e.details = details;
+    throw e;
+  }
+  return parse<{ understanding: DatasetUnderstanding }>(res);
+}
+
+export interface UnderstandSSEHooks {
+  onStage?: (stage: string) => void;
+  onUnderstanding?: (u: DatasetUnderstanding) => void;
+  onAmbiguity?: (u: DatasetUnderstanding) => void;
+  onDone?: (status: string) => void;
+  onError?: (message: string) => void;
+}
+
+/**
+ * POST /api/datasets/{id}/understand（SSE）。
+ * 事件：stage → understanding|ambiguity → done|error。
+ * done.status 为 fallback 时表示 LLM 未启用，前端引导本地模式。
+ */
+export async function runUnderstand(
+  datasetId: string,
+  hooks: UnderstandSSEHooks,
+  options?: { userDescription?: string; force?: boolean },
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/datasets/${datasetId}/understand`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userDescription: options?.userDescription,
+      force: options?.force,
+    }),
+  });
+
+  if (!res.ok || !res.body) {
+    let msg = `理解请求失败 (${res.status})`;
+    try {
+      const j = await res.json();
+      if (j?.detail) msg = j.detail;
+    } catch {
+      /* ignore */
+    }
+    hooks.onError?.(msg);
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let curEvent = "";
+  let curData = "";
+
+  const dispatch = () => {
+    if (!curEvent || !curData) return;
+    try {
+      const payload = JSON.parse(curData);
+      switch (curEvent) {
+        case "stage":
+          hooks.onStage?.(payload.stage ?? "");
+          break;
+        case "understanding":
+          hooks.onUnderstanding?.(payload.understanding as DatasetUnderstanding);
+          break;
+        case "ambiguity":
+          hooks.onAmbiguity?.(payload.understanding as DatasetUnderstanding);
+          break;
+        case "done":
+          hooks.onDone?.(payload.status ?? "");
+          break;
+        case "error":
+          hooks.onError?.(payload.message ?? "数据理解出错");
           break;
       }
     } catch {

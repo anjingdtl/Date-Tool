@@ -7,17 +7,30 @@ import FieldConfigTable, {
   type EditableField,
 } from "@/components/FieldConfigTable";
 import QualityOverview from "@/components/QualityOverview";
+import UnderstandingOverview from "@/components/UnderstandingOverview";
+import FieldUnderstandingTable from "@/components/FieldUnderstandingTable";
+import AmbiguityPanel from "@/components/AmbiguityPanel";
+import DerivedMetricSuggestions from "@/components/DerivedMetricSuggestions";
+import UnderstandingStatus, {
+  type UnderstandingPhase,
+} from "@/components/UnderstandingStatus";
 import {
   confirmDataset,
   getPreviewDetail,
+  getUnderstanding,
+  runUnderstand,
   updateFieldConfig,
+  updateUnderstanding,
+  type FieldUnderstandingChange,
   type PreviewDetail,
 } from "@/lib/api-client";
 import type {
   Aggregation,
   ColumnMeta,
+  DatasetUnderstanding,
   FieldFormat,
   FieldRole,
+  UnderstandingStateValue,
 } from "@/lib/types";
 import type {
   FieldConfigIssue,
@@ -81,6 +94,12 @@ export default function ImportPreviewPage({
     msg: string;
   } | null>(null);
 
+  /* —— v0.3：AI 数据理解状态（SPEC 20.1） —— */
+  const [understanding, setUnderstanding] = useState<DatasetUnderstanding | null>(null);
+  const [understandingPhase, setUnderstandingPhase] = useState<UnderstandingPhase>("idle");
+  const [understandingMsg, setUnderstandingMsg] = useState("");
+  const [pendingChanges, setPendingChanges] = useState<FieldUnderstandingChange[]>([]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -90,6 +109,23 @@ export default function ImportPreviewPage({
       const editable = toEditable(d.columns);
       setFields(editable);
       setInitialFields(cloneFields(editable));
+      // v0.3：加载已有 AI 理解（SPEC 19.3）
+      try {
+        const u = await getUnderstanding(draftId);
+        if (u.understanding) {
+          setUnderstanding(u.understanding);
+          const s = u.understanding.status;
+          setUnderstandingPhase(
+            s === "confirmed"
+              ? "confirmed"
+              : s === "needs_user_input"
+                ? "needs_input"
+                : "ready",
+          );
+        }
+      } catch {
+        /* 理解加载失败不阻断预检 */
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载预检详情失败");
     } finally {
@@ -119,6 +155,103 @@ export default function ImportPreviewPage({
   const truncated = data
     ? (data.originalRowCount ?? data.rowCount) > data.rowCount
     : false;
+
+  const hasBlocking =
+    understanding?.ambiguities.some((a) => a.blocking) ?? false;
+
+  /* —— v0.3：AI 数据理解（SPEC 20.1） —— */
+
+  async function startUnderstand(force = false) {
+    setUnderstandingPhase("loading");
+    setUnderstandingMsg("正在理解数据…");
+    setPendingChanges([]);
+    await runUnderstand(
+      draftId,
+      {
+        onStage: (s) => setUnderstandingMsg(s),
+        onUnderstanding: (u) => setUnderstanding(u),
+        onAmbiguity: (u) => setUnderstanding(u),
+        onDone: (status) => {
+          if (status === "fallback") {
+            setUnderstandingPhase("fallback");
+            setUnderstandingMsg("未配置 LLM，可使用本地模式生成看板。");
+          } else if (status === "needs_user_input") {
+            setUnderstandingPhase("needs_input");
+          } else {
+            setUnderstandingPhase("ready");
+          }
+        },
+        onError: (m) => {
+          setUnderstandingPhase("failed");
+          setUnderstandingMsg(m);
+        },
+      },
+      { force },
+    );
+  }
+
+  function applyFieldChange(changes: FieldUnderstandingChange[]) {
+    setPendingChanges((prev) => {
+      const merged = [...prev];
+      for (const c of changes) {
+        const idx = merged.findIndex((m) => m.field === c.field);
+        if (idx >= 0)
+          merged[idx] = {
+            field: c.field,
+            changes: { ...merged[idx].changes, ...c.changes },
+          };
+        else merged.push(c);
+      }
+      return merged;
+    });
+    setUnderstanding((prev) => {
+      if (!prev) return prev;
+      const fields = prev.fields.map((f) => {
+        const c = changes.find((x) => x.field === f.field);
+        return c ? { ...f, ...c.changes } : f;
+      });
+      return { ...prev, fields };
+    });
+  }
+
+  async function saveUnderstandingChanges() {
+    if (!understanding || pendingChanges.length === 0) return;
+    try {
+      const r = await updateUnderstanding(draftId, {
+        fieldChanges: pendingChanges,
+      });
+      setUnderstanding(r.understanding);
+      setPendingChanges([]);
+      setBanner({ type: "ok", msg: "语义修改已保存。" });
+    } catch (e) {
+      setBanner({ type: "error", msg: e instanceof Error ? e.message : "保存失败" });
+    }
+  }
+
+  async function confirmUnderstandingAction() {
+    if (!understanding) return;
+    try {
+      if (pendingChanges.length > 0) {
+        const r = await updateUnderstanding(draftId, {
+          fieldChanges: pendingChanges,
+        });
+        setUnderstanding(r.understanding);
+        setPendingChanges([]);
+      }
+      const r = await updateUnderstanding(draftId, { confirm: true });
+      setUnderstanding(r.understanding);
+      setUnderstandingPhase("confirmed");
+      setBanner({ type: "ok", msg: "AI 数据理解已确认。" });
+    } catch (e) {
+      setBanner({
+        type: "error",
+        msg: e instanceof Error
+          ? e.message
+          : "确认失败（可能存在未处理的阻塞问题）",
+      });
+      setUnderstandingPhase("needs_input");
+    }
+  }
 
   /* —— 快捷操作（SPEC 9.6） —— */
 
@@ -372,6 +505,115 @@ export default function ImportPreviewPage({
       {/* 2. 数据质量概览（SPEC 9.4） */}
       <div style={{ marginBottom: 20 }}>
         <QualityOverview quality={data.quality} />
+      </div>
+
+      {/* 2.5 AI 数据理解（v0.3，SPEC 20.1） */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="row spread" style={{ marginBottom: 12 }}>
+          <p className="section-title" style={{ margin: 0 }}>
+            AI 数据理解
+          </p>
+          <UnderstandingStatus phase={understandingPhase} />
+        </div>
+
+        {understandingPhase === "loading" && (
+          <div className="row">
+            <span className="spinner" />
+            <span className="muted">{understandingMsg || "正在理解数据…"}</span>
+          </div>
+        )}
+
+        {understandingPhase === "idle" && (
+          <div className="row spread">
+            <span className="muted" style={{ fontSize: 13, maxWidth: 600 }}>
+              让 AI 先理解数据语义与字段关系，再生成更贴切的分析。未配置 LLM 时可使用本地规则模式。
+            </span>
+            <button className="btn btn-primary" onClick={() => startUnderstand()}>
+              开始 AI 理解
+            </button>
+          </div>
+        )}
+
+        {understandingPhase === "fallback" && (
+          <div className="banner warn">
+            {understandingMsg ||
+              "未配置 LLM。可直接在下方生成看板（本地规则引擎）。"}
+            <div className="row" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => startUnderstand(true)}>
+                重试
+              </button>
+            </div>
+          </div>
+        )}
+
+        {understandingPhase === "failed" && (
+          <div className="banner error">
+            {understandingMsg || "数据理解失败。"}
+            <div className="row" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => startUnderstand(true)}>
+                重试
+              </button>
+            </div>
+          </div>
+        )}
+
+        {understanding &&
+          (understandingPhase === "ready" ||
+            understandingPhase === "needs_input" ||
+            understandingPhase === "confirmed") && (
+            <>
+              <UnderstandingOverview understanding={understanding} />
+              <AmbiguityPanel ambiguities={understanding.ambiguities} />
+              <div style={{ marginTop: 12 }}>
+                <p
+                  className="section-title"
+                  style={{ fontSize: 13, marginBottom: 6 }}
+                >
+                  字段语义（可修正，不影响物理类型）
+                </p>
+                <FieldUnderstandingTable
+                  fields={understanding.fields}
+                  onChange={applyFieldChange}
+                />
+              </div>
+              <DerivedMetricSuggestions
+                derivedMetrics={understanding.derivedMetrics}
+              />
+              <div className="row" style={{ marginTop: 12, gap: 8 }}>
+                {understandingPhase !== "confirmed" && (
+                  <>
+                    <button
+                      className="btn"
+                      onClick={saveUnderstandingChanges}
+                      disabled={pendingChanges.length === 0}
+                    >
+                      保存修改
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      onClick={confirmUnderstandingAction}
+                      disabled={hasBlocking}
+                      title={
+                        hasBlocking
+                          ? "存在未处理的阻塞问题"
+                          : "确认 AI 理解"
+                      }
+                    >
+                      确认理解
+                    </button>
+                    <button className="btn" onClick={() => startUnderstand(true)}>
+                      重新理解
+                    </button>
+                  </>
+                )}
+                {understandingPhase === "confirmed" && (
+                  <span className="muted">
+                    ✓ 已确认。可继续生成看板。
+                  </span>
+                )}
+              </div>
+            </>
+          )}
       </div>
 
       {/* 3. 字段配置表（SPEC 9.5） */}
