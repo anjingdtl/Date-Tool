@@ -157,3 +157,25 @@ export function validateAnalysisPlan(
   if (r.success) return { ok: true, data: r.data };
   return { ok: false, error: r.error.issues.map((i) => i.message).join("; ") };
 }
+
+/**
+ * LLM 输出的计划结构（SPEC 12.5）。
+ * 不含服务端补全字段 id/datasetId/understandingId/createdAt。
+ */
+export const LLMAnalysisPlanSchema = AnalysisPlanSchema.omit({
+  id: true,
+  datasetId: true,
+  understandingId: true,
+  createdAt: true,
+});
+
+export type LLMAnalysisPlanParsed = z.infer<typeof LLMAnalysisPlanSchema>;
+
+/** 校验 LLM 返回的计划（不含服务端字段） */
+export function validateLLMAnalysisPlan(
+  raw: unknown,
+): { ok: true; data: LLMAnalysisPlanParsed } | { ok: false; error: string } {
+  const r = LLMAnalysisPlanSchema.safeParse(raw);
+  if (r.success) return { ok: true, data: r.data };
+  return { ok: false, error: r.error.issues.map((i) => i.message).join("; ") };
+}

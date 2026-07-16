@@ -28,6 +28,8 @@ import { rankingTool } from "./operators/ranking";
 import { ratioTool } from "./operators/ratio";
 import { growthTool } from "./operators/growth";
 import { anomalyTool } from "./operators/anomaly";
+import { correlationTool } from "./operators/correlation";
+import { pivotTool } from "./operators/pivot";
 
 /** 执行器版本（缓存键一部分，升级执行逻辑时缓存自动失效） */
 export const EXECUTOR_VERSION = "v0.3.0-1";
@@ -47,7 +49,8 @@ register(rankingTool);
 register(ratioTool);
 register(growthTool);
 register(anomalyTool);
-// correlation / pivot 在阶段 6 注册
+register(correlationTool);
+register(pivotTool);
 
 /** 取操作符定义；不存在返回 null */
 export function getTool(operator: AnalysisOperator): ToolDefinition | null {

@@ -9,14 +9,16 @@ import type { TaskExecutionResult } from "@/lib/types";
 
 const MAX_ENTRIES = 500;
 const cache = new Map<string, TaskExecutionResult>();
+let hitCount = 0;
 
-/** 读取缓存结果；不存在返回 null */
+/** 读取缓存结果；不存在返回 null。命中时统计 +1。 */
 export function getCachedTaskResult(key: string): TaskExecutionResult | null {
   const hit = cache.get(key);
   if (hit) {
     // LRU：命中后重新插入到末尾
     cache.delete(key);
     cache.set(key, hit);
+    hitCount++;
     return hit;
   }
   return null;
@@ -38,9 +40,15 @@ export function setCachedTaskResult(
 /** 清空缓存（测试用） */
 export function clearTaskCache(): void {
   cache.clear();
+  hitCount = 0;
 }
 
 /** 当前缓存条目数（测试用） */
 export function taskCacheSize(): number {
   return cache.size;
+}
+
+/** 累计命中次数（execute-plan 用于统计本轮命中） */
+export function getCacheHits(): number {
+  return hitCount;
 }
