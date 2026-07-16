@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 这是什么
 
-Date-Tool（包名 `wecom-ops-dashboard`，v0.2.1）：个人本地数据分析与可视化工具。拖入 Excel/CSV → 预检校正字段 → **本地确定性引擎**算出所有图表与洞察 → 可选 LLM 生成自然语言解读。不配 LLM 密钥也能跑完整流程。技术栈 Next.js 14 (App Router) + React 18 + ECharts 5 + Zod，数据以 JSON 文件落盘，零原生依赖。
+Date-Tool（包名 `wecom-ops-dashboard`，v0.3.0）：个人本地数据分析 Agent。拖入 Excel/CSV → 预检与 AI 数据理解确认 → LLM 制订受控计划 → 本地确定性工具执行 → LLM 终审 → 用户自然语言微调与 Revision。无 LLM 密钥时走本地规则模式。技术栈 Next.js 14 (App Router) + React 18 + ECharts 5 + Zod，数据以 JSON 文件落盘，零原生依赖。
 
 深入背景见 `README.md`（功能/流程/目录）与 `ARCHITECTURE.md`（数据流/模块职责/约束）。规格见 `docs/`。
 
@@ -44,25 +44,26 @@ npx vitest run -t "解析 CSV"     # 按用例名匹配
 - `/import/[draftId]` 预检页：质量报告 + 字段配置校正（`PUT /api/datasets/[id]/config`）→ 确认 `POST /api/datasets/[id]/confirm`（draft→ready）。
 - `/dashboard/[id]` 看板页：`POST /api/analyze` 才允许（只接受 ready/completed）。状态守卫与状态转换散落在 `app/api/datasets/**` 与 `lib/store.ts`，改流程时务必同步两边。
 
-### 2. 本地确定性优先 · LLM 仅解读（最核心的设计哲学）
+### 2. LLM 指挥 · 本地确定性执行（最核心的设计哲学）
 
-所有数值（统计/趋势/对比/异常/占比/Top）必须由 `lib/analysis/*` 计算，每条洞察带可追溯 `evidenceId`。LLM **永远不参与数值计算**。
+所有数值必须由 `lib/executor/*` 注册工具（复用 `lib/analysis/*`）计算，每个任务生成 Evidence。LLM **永远不参与数值计算**。
 
-- `lib/analyzer.ts::analyzeDataset` 编排顺序：① `runLocalAnalysis` 算本地结果 → ② 立即 `onStructured` 推送（前端马上能看图）→ ③ 仅当 `config.llm.enabled` 才 `chatJSON` 拿解读 → ④ 应用 `renamedChartTitles` → ⑤ 流式推 narrative → ⑥ 任一 LLM 步骤失败则回退本地。
-- `provider` 取值：`"local"`（纯本地）或 `"local+llm"`（本地+解读成功）。
-- LLM **安全边界**（`lib/llm-prompt.ts`）：`buildLLMInput` 只发结构化摘要/字段定义/evidence/图表列表，**绝不发原始行**；`LLMInterpretationSchema` 只允许返回 `summary/narrative/actions/renamedChartTitles`，禁止改 `xField/yField/agg/数值`。
+- `lib/analyzer.ts` 是兼容门面：LLM 未启用、理解未确认或编排失败时走 `rule_fallback`；否则进入 `run-analysis-session`。
+- 主链路：Understanding → Plan → Validate → Execute → Review → optional revise → Finalize。
+- 用户反馈必须先转成 `AnalysisPlanPatch`，经影响分析后增量执行并形成新 Revision。
+- `provider` 保留 `local | local+llm`；用 `analysisMode` 区分 `rule_fallback | llm_orchestrated`。
 
 ### 3. 文件型存储（`lib/store.ts`）
 
-- 每个数据集一个目录 `.data/datasets/<uuid>/`，**三文件拆分**：`meta.json`（不含大数据）、`rows.json`、`analyses.json`。轻量读元信息不被迫加载全表。
-- 所有写入经 `saveJsonAtomic`（写临时文件 → rename），避免半写损坏。
+- 每个数据集一个目录 `.data/datasets/<uuid>/`，保留 `meta/rows/analyses`，新增 `context/understanding/sessions/*/revisions`。
+- 所有写入经 `saveJsonAtomic`（同路径串行、临时文件 fsync/关闭 → rename）。Revision 先写，Session 最后激活。
 - **Dataset ID 必须是 UUID**，所有入口用 `isValidDatasetId`（从 `lib/schemas/dataset.ts` 统一校验，`store.ts` re-export）。
 - 单数据集默认 5 万行截断，`quality.storedRowCount < originalRowCount` 时分析结论须注明。
 - 持久化可平滑替换为 Postgres/SQLite——只要保留 `store.ts` 的接口，上层无感。
 
 ### 4. SSE 流式分析（`app/api/analyze/route.ts`）
 
-`POST /api/analyze` 返回 `text/event-stream`，事件类型：`stage`（阶段提示）→ `result`（本地 structured，含 charts/insights/evidence）→ `token`×N（narrative 逐段）→ `done`（provider/createdAt）/ `error`。前端 `lib/api-client.ts` 负责解析。注意 `analyze/route.ts` 自己手写 SSE，没用 `lib/respond.ts` 的统一 `ok/fail`（流式响应不走 JSON 信封）。
+`POST /api/analyze` 与 `POST /api/analysis/{sessionId}/feedback` 返回 SSE。编排事件包括 `stage/plan/task_started/task_completed/task_failed/review/question/revision/token/final/done/error`，并兼容旧 `result`。错误后不得再发送 `final/done`。
 
 ### 5. WebUI 关闭即停服务（独特机制，`lib/heartbeat.ts` + `components/AutoShutdown.tsx`）
 

@@ -134,7 +134,7 @@ describe("ChartSpecSchema · 结构校验(SPEC 11.4)", () => {
     const spec = {
       id: "c1",
       title: "测试",
-      type: "scatter",
+      type: "radar",
       xField: "客户",
       yField: "金额",
       agg: "sum",
@@ -166,13 +166,20 @@ describe("ChartSpecSchema · 结构校验(SPEC 11.4)", () => {
   it("filterValidCharts 局部容错:跳过非法,保留合法", () => {
     const raws = [
       { id: "c1", title: "ok", type: "bar", xField: "x", yField: "y", agg: "sum" },
-      { id: "c2", title: "bad", type: "scatter", xField: "x", yField: "y", agg: "sum" },
+      { id: "c2", title: "bad", type: "radar", xField: "x", yField: "y", agg: "sum" },
       { id: "c3", title: "ok2", type: "line", xField: "x", yField: "y", agg: "avg" },
     ];
     const out = filterValidCharts(raws);
     expect(out.length).toBe(2);
     expect(out[0].id).toBe("c1");
     expect(out[1].id).toBe("c3");
+  });
+
+  it("v0.3 扩展图表类型可读", () => {
+    for (const type of ["area", "stacked_bar", "scatter", "heatmap", "kpi"]) {
+      const spec = { id: type, title: type, type, xField: "x", yField: "y", agg: "sum" };
+      expect(ChartSpecSchema.safeParse(spec).success).toBe(true);
+    }
   });
 });
 

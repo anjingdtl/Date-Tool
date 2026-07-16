@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
+import { randomUUID } from "crypto";
 import { config } from "./config";
 import {
   DatasetIdSchema,
@@ -7,6 +8,8 @@ import {
 } from "./schemas/dataset";
 import type {
   AnalysisResult,
+  AnalysisRevision,
+  AnalysisSession,
   ColumnMeta,
   DataContext,
   DatasetAnalysisConfig,
@@ -25,6 +28,10 @@ import { logger } from "./logger";
 export { DatasetIdSchema, isValidDatasetId };
 
 const DATASET_DIR = path.join(config.dataDir, "datasets");
+const MAX_SESSIONS_PER_DATASET = 5;
+const MAX_REVISIONS_PER_SESSION = 20;
+const ARTIFACT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const writeQueues = new Map<string, Promise<void>>();
 
 async function ensureBaseDir(): Promise<void> {
   await fs.mkdir(DATASET_DIR, { recursive: true });
@@ -123,18 +130,40 @@ export function toPublicDataset(ds: StoredDataset): PublicDataset {
 /**
  * 原子写入 JSON：先写同目录临时文件，再 rename，失败清理临时文件。
  */
-export async function saveJsonAtomic(file: string, data: unknown): Promise<void> {
+async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
   const dir = path.dirname(file);
   await fs.mkdir(dir, { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(data), "utf-8");
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
   try {
+    handle = await fs.open(tmp, "wx");
+    await handle.writeFile(JSON.stringify(data), "utf-8");
+    await handle.sync();
+    await handle.close();
+    handle = null;
     await fs.rename(tmp, file);
   } catch (err) {
+    await handle?.close().catch(() => {});
     await fs.unlink(tmp).catch(() => {
       /* 清理临时文件失败不阻断主流程 */
     });
     throw err;
+  }
+}
+
+/**
+ * 原子 JSON 写入，同一路径在进程内串行化。
+ * 这既避免并发 rename 相互覆盖，也满足 Session/Revision 同文件不得并行写入的约束。
+ */
+export async function saveJsonAtomic(file: string, data: unknown): Promise<void> {
+  const key = path.resolve(file);
+  const previous = writeQueues.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => {}).then(() => writeJsonAtomic(key, data));
+  writeQueues.set(key, current);
+  try {
+    await current;
+  } finally {
+    if (writeQueues.get(key) === current) writeQueues.delete(key);
   }
 }
 
@@ -611,4 +640,193 @@ export async function getContext(
   } catch {
     return null;
   }
+}
+
+/* ----------------------- v0.3：Session / Revision 持久化（SPEC 19.1） ----------------------- */
+
+function sessionsDir(datasetId: string): string {
+  return path.join(datasetDir(datasetId), "sessions");
+}
+
+function isValidArtifactId(id: string): boolean {
+  return ARTIFACT_ID_RE.test(id);
+}
+function sessionDir(datasetId: string, sessionId: string): string {
+  return path.join(sessionsDir(datasetId), sessionId);
+}
+function sessionPath(datasetId: string, sessionId: string): string {
+  return path.join(sessionDir(datasetId, sessionId), "session.json");
+}
+function revisionsDir(datasetId: string, sessionId: string): string {
+  return path.join(sessionDir(datasetId, sessionId), "revisions");
+}
+function revisionPath(
+  datasetId: string,
+  sessionId: string,
+  revisionId: string,
+): string {
+  return path.join(revisionsDir(datasetId, sessionId), `${revisionId}.json`);
+}
+
+/** 保存 Session（原子写入） */
+export async function saveSession(
+  datasetId: string,
+  session: AnalysisSession,
+): Promise<void> {
+  if (!isValidDatasetId(datasetId))
+    throw new Error(`[store] 拒绝保存 session：ID 非法：${datasetId}`);
+  if (!isValidArtifactId(session.id) || session.datasetId !== datasetId)
+    throw new Error("[store] 拒绝保存 session：会话标识或 datasetId 不匹配");
+  const existing = await getSession(datasetId, session.id);
+  if (!existing) {
+    const sessions = await listSessions(datasetId);
+    if (sessions.length >= MAX_SESSIONS_PER_DATASET) {
+      throw new Error(`Session 数量已达到上限 ${MAX_SESSIONS_PER_DATASET}`);
+    }
+  }
+  await ensureBaseDir();
+  await fs.mkdir(sessionDir(datasetId, session.id), { recursive: true });
+  await saveJsonAtomic(sessionPath(datasetId, session.id), session);
+}
+
+/** 读取 Session；不存在返回 null */
+export async function getSession(
+  datasetId: string,
+  sessionId: string,
+): Promise<AnalysisSession | null> {
+  if (!isValidDatasetId(datasetId) || !isValidArtifactId(sessionId)) return null;
+  try {
+    const raw = await fs.readFile(sessionPath(datasetId, sessionId), "utf-8");
+    return JSON.parse(raw) as AnalysisSession;
+  } catch {
+    return null;
+  }
+}
+
+/** 列出数据集的所有 Session（按 createdAt 升序） */
+export async function listSessions(
+  datasetId: string,
+): Promise<AnalysisSession[]> {
+  if (!isValidDatasetId(datasetId)) return [];
+  const dir = sessionsDir(datasetId);
+  if (!(await pathExists(dir))) return [];
+  let entries: string[] = [];
+  try {
+    entries = await fs.readdir(dir);
+  } catch {
+    return [];
+  }
+  const out: AnalysisSession[] = [];
+  for (const entry of entries) {
+    try {
+      const raw = await fs.readFile(
+        path.join(dir, entry, "session.json"),
+        "utf-8",
+      );
+      out.push(JSON.parse(raw) as AnalysisSession);
+    } catch {
+      /* skip */
+    }
+  }
+  return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/** 通过全局 sessionId 定位所属数据集（本地个人工具，最多仅扫描少量数据集）。 */
+export async function findSession(
+  sessionId: string,
+): Promise<{ datasetId: string; session: AnalysisSession } | null> {
+  if (!isValidArtifactId(sessionId)) return null;
+  await ensureBaseDir();
+  let entries: string[] = [];
+  try {
+    entries = await fs.readdir(DATASET_DIR);
+  } catch {
+    return null;
+  }
+  for (const datasetId of entries) {
+    if (!isValidDatasetId(datasetId)) continue;
+    const session = await getSession(datasetId, sessionId);
+    if (session) return { datasetId, session };
+  }
+  return null;
+}
+
+/** 保存 Revision（原子写入） */
+export async function saveRevision(
+  datasetId: string,
+  sessionId: string,
+  revision: AnalysisRevision,
+): Promise<void> {
+  if (!isValidDatasetId(datasetId))
+    throw new Error(`[store] 拒绝保存 revision：ID 非法：${datasetId}`);
+  if (
+    !isValidArtifactId(sessionId) ||
+    !isValidArtifactId(revision.id) ||
+    revision.sessionId !== sessionId
+  ) {
+    throw new Error("[store] 拒绝保存 revision：版本标识或 sessionId 不匹配");
+  }
+  const existing = await getRevision(datasetId, sessionId, revision.id);
+  if (!existing) {
+    const revisions = await listRevisions(datasetId, sessionId);
+    if (revisions.length >= MAX_REVISIONS_PER_SESSION) {
+      throw new Error(`Revision 数量已达到上限 ${MAX_REVISIONS_PER_SESSION}`);
+    }
+  }
+  await ensureBaseDir();
+  await fs.mkdir(revisionsDir(datasetId, sessionId), { recursive: true });
+  await saveJsonAtomic(
+    revisionPath(datasetId, sessionId, revision.id),
+    revision,
+  );
+}
+
+/** 读取 Revision；不存在返回 null */
+export async function getRevision(
+  datasetId: string,
+  sessionId: string,
+  revisionId: string,
+): Promise<AnalysisRevision | null> {
+  if (
+    !isValidDatasetId(datasetId) ||
+    !isValidArtifactId(sessionId) ||
+    !isValidArtifactId(revisionId)
+  )
+    return null;
+  try {
+    const raw = await fs.readFile(
+      revisionPath(datasetId, sessionId, revisionId),
+      "utf-8",
+    );
+    return JSON.parse(raw) as AnalysisRevision;
+  } catch {
+    return null;
+  }
+}
+
+/** 列出 Session 的所有 Revision（按 sequence 升序） */
+export async function listRevisions(
+  datasetId: string,
+  sessionId: string,
+): Promise<AnalysisRevision[]> {
+  if (!isValidDatasetId(datasetId) || !isValidArtifactId(sessionId)) return [];
+  const dir = revisionsDir(datasetId, sessionId);
+  if (!(await pathExists(dir))) return [];
+  let entries: string[] = [];
+  try {
+    entries = await fs.readdir(dir);
+  } catch {
+    return [];
+  }
+  const out: AnalysisRevision[] = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    try {
+      const raw = await fs.readFile(path.join(dir, entry), "utf-8");
+      out.push(JSON.parse(raw) as AnalysisRevision);
+    } catch {
+      /* skip */
+    }
+  }
+  return out.sort((a, b) => a.sequence - b.sequence);
 }

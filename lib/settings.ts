@@ -10,7 +10,7 @@ export interface LLMSettings {
   baseUrl: string;
   apiKey: string;
   model: string;
-  /** 用户是否启用真实 LLM（未启用则走 Mock） */
+  /** 用户是否启用 LLM 编排（未启用则走本地规则模式） */
   enabled: boolean;
 }
 

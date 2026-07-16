@@ -32,7 +32,7 @@ export default function ChartCard({
   const [exportStatus, setExportStatus] = useState<ExportStatus>("idle");
 
   useEffect(() => {
-    if (spec.type === "table") return;
+    if (spec.type === "table" || spec.type === "kpi") return;
     if (!chartRef.current) return;
     const chart = echarts.init(chartRef.current, undefined, {
       renderer: "canvas",
@@ -279,7 +279,9 @@ export default function ChartCard({
       </div>
 
       {spec.type === "table" ? (
-        <DataTable rows={rows} />
+        <DataTable rows={spec.dataRows ?? rows} />
+      ) : spec.type === "kpi" ? (
+        <div className="kpi-value">{spec.scalar ?? "—"}</div>
       ) : (
         <div className="chart-box" ref={chartRef} />
       )}

@@ -15,7 +15,13 @@ export function applyReviewPatch(
   plan: AnalysisPlan,
   patch: AnalysisPlanPatch,
 ): AnalysisPlan {
-  let tasks = plan.tasks;
+  let tasks = plan.tasks.map((task) => ({
+    ...task,
+    dimensions: [...task.dimensions],
+    metrics: [...task.metrics],
+    filters: task.filters.map((filter) => ({ ...filter })),
+    dependsOn: [...task.dependsOn],
+  }));
 
   // 1. 删除任务 + 清理依赖
   if (patch.removeTasks.length > 0) {
@@ -48,7 +54,7 @@ export function applyReviewPatch(
   }
 
   // 4. dashboard 变更
-  let items = plan.dashboard.items;
+  let items = plan.dashboard.items.map((item) => ({ ...item }));
   const dc = patch.dashboardChanges;
   if (dc.removeItems.length > 0) {
     const rm = new Set(dc.removeItems);

@@ -21,7 +21,7 @@ export const UnderstandingPatchSchema = z.object({
     .array(
       z.object({
         field: z.string().min(1),
-        changes: FieldUnderstandingSchema.partial(),
+        changes: FieldUnderstandingSchema.omit({ field: true }).partial().strict(),
       }),
     )
     .optional(),

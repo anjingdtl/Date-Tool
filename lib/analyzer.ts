@@ -1,63 +1,52 @@
 /**
  * lib/analyzer.ts
  *
- * v0.2 阶段 G 重写:
- * - 本地确定性引擎(runLocalAnalysis)先算所有数值;
- * - 立即向前端发送 structured 结果(charts + insights + evidence);
- * - 若启用 LLM,只发送结构化结果(不含原始数据)让 LLM 做解读;
- * - LLM 只返回 summary/narrative/actions/renamedChartTitles(SPEC 12.2);
- * - LLM 不得修改 xField/yField/agg/计算结果;
- * - 失败回退:LLM 超时或出错时保留本地结果,provider=local;
- * - provider 改为 "local" | "local+llm"(SPEC 12.6)。
+ * v0.3 兼容门面（SPEC 14.1）：
+ * - LLM 未启用 / 无已确认 Understanding → runLocalFallbackAnalysis（保留 v0.2.1 本地降级）；
+ * - LLM 启用 + confirmed Understanding → runOrchestratedAnalysis（理解→计划→执行→终审）。
  *
- * 旧 mock 逻辑保留为本地兜底,不再单独走 mock 分支。
+ * 现有 runLocalAnalysis 保留为无 LLM 或 LLM 失败时的 fallback。
  */
-
 import { buildChartOption } from "./chart";
-import { chatJSON, streamChat } from "./llm";
 import { logger } from "./logger";
 import { getActiveLLMConfig } from "./llm-config";
-import {
-  buildLLMInput,
-  SYSTEM_PROMPT,
-  validateLLMInterpretation,
-} from "./llm-prompt";
 import { runLocalAnalysis } from "./analysis";
+import { getUnderstanding } from "./store";
+import { runAnalysisSession } from "./orchestrator/run-analysis-session";
+import type { OrchestratorHooks } from "./orchestrator/events";
 import type {
   AnalysisEvidence,
+  AnalysisPlan,
   AnalysisResult,
+  AnalysisReview,
+  AnalysisRevision,
+  AnalysisTask,
   ChartSpec,
   ComputedInsight,
   EChartsOption,
+  FinalAnalysisResult,
   StoredDataset,
+  TaskExecutionResult,
 } from "./types";
 
 /* ------------------------- 工具 ------------------------- */
 
-function attachOptions(
-  charts: ChartSpec[],
-  ds: StoredDataset,
-): EChartsOption[] {
+function attachOptions(charts: ChartSpec[], ds: StoredDataset): EChartsOption[] {
   return charts.map((c) => buildChartOption(c, ds.rows));
 }
 
-/** 把 ComputedInsight 转成前端展示用的字符串数组 */
 function insightsToStrings(insights: ComputedInsight[]): string[] {
   return insights.map(
-    (i) => `[${i.level === "warning" ? "关注" : i.level === "positive" ? "正向" : "提示"}] ${i.title} — ${i.statement}`,
+    (i) =>
+      `[${i.level === "warning" ? "关注" : i.level === "positive" ? "正向" : "提示"}] ${i.title} — ${i.statement}`,
   );
 }
 
-/** 生成本地兜底 summary */
 function localSummary(ds: StoredDataset, insightCount: number): string {
-  return `数据集《${ds.name}》共 ${ds.rowCount} 行、${ds.columns.length} 列,本地引擎已生成 ${insightCount} 条洞察。`;
+  return `数据集《${ds.name}》共 ${ds.rowCount} 行、${ds.columns.length} 列，本地引擎已生成 ${insightCount} 条洞察。`;
 }
 
-/** 生成本地兜底 narrative */
-function localNarrative(
-  ds: StoredDataset,
-  insights: ComputedInsight[],
-): string {
+function localNarrative(ds: StoredDataset, insights: ComputedInsight[]): string {
   const top = insights.slice(0, 3);
   const parts = top.map((i) => `· ${i.title}: ${i.statement}`);
   return [
@@ -68,24 +57,16 @@ function localNarrative(
   ].join("\n\n");
 }
 
-/** 应用 LLM 返回的 renamedChartTitles 到 charts(SPEC 12.2) */
-function applyRenamedTitles(
-  charts: ChartSpec[],
-  renamed?: Record<string, string>,
-): ChartSpec[] {
-  if (!renamed) return charts;
-  return charts.map((c) => {
-    const newTitle = renamed[c.id];
-    if (newTitle && newTitle.trim()) {
-      return { ...c, title: newTitle.trim() };
-    }
-    return c;
-  });
+function chunkText(text: string, chunkSize: number): string[] {
+  const chunks: string[] = [];
+  for (let i = 0; i < text.length; i += chunkSize)
+    chunks.push(text.slice(i, i + chunkSize));
+  return chunks;
 }
 
 /* ------------------------- 钩子定义 ------------------------- */
 
-/** SSE final 事件载荷（SPEC 9.2）：LLM/local 完成后一次性发送最终结果 */
+/** SSE final 事件载荷（本地兜底） */
 export interface FinalAnalysisPayload {
   summary: string;
   insights: string[];
@@ -100,7 +81,6 @@ export interface FinalAnalysisPayload {
 }
 
 export interface AnalyzeHooks {
-  /** 本地结果就绪时触发(立即发送给前端) */
   onStructured?: (p: {
     summary: string;
     insights: string[];
@@ -111,15 +91,20 @@ export interface AnalyzeHooks {
     warnings?: string[];
     provider: "local" | "local+llm";
   }) => void;
-  /** LLM 流式 token(SPEC 12.4) */
   onNarrativeToken: (token: string) => void;
-  /** LLM 阶段切换提示(SPEC 13.2 分析阶段状态) */
-  onStage?: (stage: string) => void;
-  /** 最终结果（SPEC 9.2 final 事件）：完成时整体发送，前端据此刷新 summary/图表/标题 */
-  onFinal?: (p: FinalAnalysisPayload) => void;
+  onStage?: (stage: string, code?: string) => void;
+  onFinal?: (p: FinalAnalysisPayload | FinalAnalysisResult) => void;
+  /** v0.3 编排事件 */
+  onPlan?: (plan: AnalysisPlan) => void;
+  onTaskStarted?: (task: AnalysisTask) => void;
+  onTaskCompleted?: (task: AnalysisTask, result: TaskExecutionResult) => void;
+  onTaskFailed?: (task: AnalysisTask, result: TaskExecutionResult) => void;
+  onReview?: (review: AnalysisReview) => void;
+  onQuestion?: (questions: string[]) => void;
+  onRevision?: (revision: AnalysisRevision) => void;
 }
 
-/** 发送 final 事件载荷（SPEC 9.2），由 local 与 llm 分支在返回前统一调用 */
+/** 本地兜底 final 载荷 */
 function emitFinal(hooks: AnalyzeHooks, r: AnalysisResult): void {
   hooks.onFinal?.({
     summary: r.summary,
@@ -135,70 +120,80 @@ function emitFinal(hooks: AnalyzeHooks, r: AnalysisResult): void {
   });
 }
 
-/* ------------------------- 总入口 ------------------------- */
+/* ------------------------- 总入口（门面） ------------------------- */
 
-/**
- * 分析数据集。
- *
- * 流程(SPEC 12.4):
- * 1. 本地计算 runLocalAnalysis;
- * 2. 立即 onStructured 发送本地结果;
- * 3. 若启用 LLM,chatJSON 拿 interpretation;
- * 4. 应用 renamedChartTitles;
- * 5. streamChat 流式发送 narrative;
- * 6. 返回完整 AnalysisResult。
- *
- * 失败回退:任何 LLM 步骤失败都保留本地结果,provider=local。
- */
 export async function analyzeDataset(
+  ds: StoredDataset,
+  requestId: string,
+  hooks: AnalyzeHooks,
+  options?: { userGoal?: string },
+): Promise<AnalysisResult> {
+  const llmConfig = await getActiveLLMConfig();
+  if (!llmConfig.enabled) {
+    return runLocalFallbackAnalysis(ds, requestId, hooks);
+  }
+  // LLM 编排需已确认 Understanding（SPEC 6 / 19.3）
+  const understanding = await getUnderstanding(ds.id);
+  if (!understanding || understanding.status !== "confirmed") {
+    logger.info("orchestrator_fallback_no_understanding", {
+      requestId,
+      datasetId: ds.id,
+    });
+    return runLocalFallbackAnalysis(ds, requestId, hooks);
+  }
+  try {
+    return await runOrchestratedAnalysis(
+      ds,
+      understanding,
+      requestId,
+      hooks,
+      options,
+    );
+  } catch (err) {
+    // 计划生成/校验等编排步骤失败时不得让可用的本地分析一起失败。
+    // runAnalysisSession 只会在最终成功时发 final，因此这里不会产生伪双 final。
+    logger.warn("orchestrator_failed_fallback_local", {
+      requestId,
+      datasetId: ds.id,
+      message: err instanceof Error ? err.message : "unknown",
+    });
+    hooks.onStage?.("AI 编排不可用，正在切换到本地规则模式", "fallback");
+    return runLocalFallbackAnalysis(ds, requestId, hooks);
+  }
+}
+
+/* ------------------------- 本地降级（保留 v0.2.1） ------------------------- */
+
+async function runLocalFallbackAnalysis(
   ds: StoredDataset,
   requestId: string,
   hooks: AnalyzeHooks,
 ): Promise<AnalysisResult> {
   const createdAt = new Date().toISOString();
-
-  /* —— 0. 解析运行时 LLM 配置(SPEC 6 单一事实来源) —— */
-  const llmConfig = await getActiveLLMConfig();
-  logger.info("llm_config_resolved", {
-    requestId,
-    provider: llmConfig.provider,
-    model: llmConfig.model,
-    enabled: llmConfig.enabled,
-  });
-
-  /* —— 1. 本地确定性计算(SPEC 10) —— */
-  hooks.onStage?.("正在计算数据质量与统计结果");
+  hooks.onStage?.("正在计算数据质量与统计结果", "local_analysis");
   const local = runLocalAnalysis(ds);
 
   const insights = local.insights;
   const insightStrings = insightsToStrings(insights);
   const warnings: string[] = [];
-  if (
-    ds.quality &&
-    ds.quality.storedRowCount < ds.quality.originalRowCount
-  ) {
+  if (ds.quality && ds.quality.storedRowCount < ds.quality.originalRowCount) {
     warnings.push(
       `数据已截断:原始 ${ds.quality.originalRowCount} 行,载入 ${ds.quality.storedRowCount} 行,结论基于已载入数据。`,
     );
   }
   for (const o of local.outliers) {
     if (o.detected && o.outlierCount > 0) {
-      warnings.push(
-        `字段「${o.field}」检测到 ${o.outlierCount} 个统计异常(IQR)。`,
-      );
+      warnings.push(`字段「${o.field}」检测到 ${o.outlierCount} 个统计异常(IQR)。`);
     }
   }
   if (local.chartIssues.length > 0) {
-    warnings.push(
-      `图表引擎有 ${local.chartIssues.length} 条校验提示(已局部容错)。`,
-    );
+    warnings.push(`图表引擎有 ${local.chartIssues.length} 条校验提示(已局部容错)。`);
   }
 
   const summaryText = localSummary(ds, insights.length);
   const localCharts = local.charts;
   const localOptions = attachOptions(localCharts, ds);
 
-  /* —— 2. 立即发送本地结果(SPEC 12.4) —— */
   hooks.onStructured?.({
     summary: summaryText,
     insights: insightStrings,
@@ -210,117 +205,55 @@ export async function analyzeDataset(
     provider: "local",
   });
 
-  /* —— 3. 若未启用 LLM,直接返回本地结果(仍流式推送 narrative) —— */
-  if (!llmConfig.enabled) {
-    const narrative = localNarrative(ds, insights);
-    for (const ch of chunkText(narrative, 20)) {
-      hooks.onNarrativeToken(ch);
-    }
-    const result: AnalysisResult = {
-      provider: "local",
-      summary: summaryText,
-      insights: insightStrings,
-      charts: localCharts,
-      options: localOptions,
-      narrative,
-      createdAt,
-      evidence: local.evidence,
-      computedInsights: insights,
-      warnings,
-      version: "v0.2.1",
-    };
-    emitFinal(hooks, result);
-    return result;
-  }
+  const narrative = localNarrative(ds, insights);
+  for (const ch of chunkText(narrative, 20)) hooks.onNarrativeToken(ch);
 
-  /* —— 4. LLM 解读(SPEC 12.1/12.2) —— */
-  hooks.onStage?.("正在生成 LLM 解读");
-
-  let interpretation: {
-    summary: string;
-    narrative: string;
-    actions: string[];
-    renamedChartTitles?: Record<string, string>;
-  } | null = null;
-
-  try {
-    const userPrompt = buildLLMInput(ds, local);
-    const raw = await chatJSON(SYSTEM_PROMPT, userPrompt, requestId);
-    const valid = validateLLMInterpretation(raw);
-    if (valid.ok) {
-      interpretation = valid.data;
-    } else {
-      logger.warn("LLM interpretation 校验失败,回退本地", {
-        requestId,
-        error: valid.error,
-      });
-    }
-  } catch (err) {
-    logger.warn("LLM 结构化解读失败,回退本地", {
-      requestId,
-      message: err instanceof Error ? err.message : "unknown",
-    });
-  }
-
-  // 应用 renamedChartTitles(SPEC 12.2)
-  const finalCharts = interpretation
-    ? applyRenamedTitles(localCharts, interpretation.renamedChartTitles)
-    : localCharts;
-  const finalOptions = attachOptions(finalCharts, ds);
-
-  const finalSummary = interpretation?.summary ?? summaryText;
-  const finalInsights = interpretation
-    ? [...insightStrings, ...interpretation.actions.map((a) => `[行动] ${a}`)]
-    : insightStrings;
-
-  /* —— 5. 流式发送 narrative(SPEC 12.4) —— */
-  let narrative = "";
-  if (interpretation?.narrative) {
-    // 流式输出 LLM 生成的 narrative
-    hooks.onStage?.("正在流式发送解读");
-    try {
-      // 注意:interpretation.narrative 已经是 chatJSON 返回的完整文本,
-      // 这里不再调 streamChat 重复请求,直接逐段发送。
-      // 真正的流式在 chatJSON 之后可选:为保持单次请求,我们分段推送。
-      const chunks = chunkText(interpretation.narrative, 20);
-      for (const ch of chunks) {
-        hooks.onNarrativeToken(ch);
-        narrative += ch;
-      }
-    } catch {
-      narrative = interpretation.narrative;
-      hooks.onNarrativeToken(narrative);
-    }
-  } else {
-    // LLM 失败,推送本地兜底 narrative
-    narrative = localNarrative(ds, insights);
-    hooks.onNarrativeToken(narrative);
-  }
-
-  /* —— 6. 返回完整结果 —— */
-  const usedLLM = interpretation !== null;
-  const result: AnalysisResult = {
-    provider: usedLLM ? "local+llm" : "local",
-    summary: finalSummary,
-    insights: finalInsights,
-    charts: finalCharts,
-    options: finalOptions,
+  const result: FinalAnalysisResult = {
+    provider: "local",
+    summary: summaryText,
+    insights: insightStrings,
+    charts: localCharts,
+    options: localOptions,
     narrative,
     createdAt,
     evidence: local.evidence,
     computedInsights: insights,
     warnings,
-    version: "v0.2.1",
+    version: "v0.3.0",
+    analysisMode: "rule_fallback",
+    reviewStatus: "unavailable",
   };
   emitFinal(hooks, result);
   return result;
 }
 
-/** 把文本按 chunkSize 字符切块(用于模拟流式推送) */
-function chunkText(text: string, chunkSize: number): string[] {
-  const chunks: string[] = [];
-  for (let i = 0; i < text.length; i += chunkSize) {
-    chunks.push(text.slice(i, i + chunkSize));
-  }
-  return chunks;
+/* ------------------------- LLM 编排 ------------------------- */
+
+async function runOrchestratedAnalysis(
+  ds: StoredDataset,
+  understanding: NonNullable<Awaited<ReturnType<typeof getUnderstanding>>>,
+  requestId: string,
+  hooks: AnalyzeHooks,
+  options?: { userGoal?: string },
+): Promise<FinalAnalysisResult> {
+  const orchHooks: OrchestratorHooks = {
+    onStage: (code, message) => hooks.onStage?.(message, code),
+    onPlan: (plan) => hooks.onPlan?.(plan),
+    onTaskStarted: (t) => hooks.onTaskStarted?.(t),
+    onTaskCompleted: (t, r) => hooks.onTaskCompleted?.(t, r),
+    onTaskFailed: (t, r) => hooks.onTaskFailed?.(t, r),
+    onReview: (review) => hooks.onReview?.(review),
+    onQuestion: (q) => hooks.onQuestion?.(q),
+    onRevision: (rev) => hooks.onRevision?.(rev),
+    onNarrativeToken: (tok) => hooks.onNarrativeToken(tok),
+    onFinal: (fr) => hooks.onFinal?.(fr),
+  };
+  const result = await runAnalysisSession({
+    dataset: ds,
+    understanding,
+    requestId,
+    hooks: orchHooks,
+    userGoal: options?.userGoal,
+  });
+  return result.finalResult;
 }

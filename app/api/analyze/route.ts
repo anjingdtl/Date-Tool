@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   const requestId = newRequestId();
   const encoder = new TextEncoder();
 
-  let body: { datasetId?: string };
+  let body: { datasetId?: string; userGoal?: string; forceNewSession?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -94,15 +94,47 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        const result = await analyzeDataset(ds, requestId, {
-          // SPEC 12.4: onStructured 透传 evidence/computedInsights/warnings/provider
-          onStructured: (p) => send("result", p),
-          onNarrativeToken: (token: string) => send("token", { text: token }),
-          // SPEC 13.2: 分析阶段状态
-          onStage: (stage: string) => send("stage", { stage }),
-          // SPEC 9.2: 最终结果事件，前端据此整体刷新
-          onFinal: (p) => send("final", p),
-        });
+        const result = await analyzeDataset(
+          ds,
+          requestId,
+          {
+            // SPEC 12.4: onStructured 透传 evidence/computedInsights/warnings/provider
+            onStructured: (p) => send("result", p),
+            onNarrativeToken: (token: string) => send("token", { text: token }),
+            // SPEC 13.2: 分析阶段状态
+            onStage: (stage: string, code?: string) =>
+              send("stage", { stage, code, message: stage }),
+            // SPEC 9.2: 最终结果事件，前端据此整体刷新
+            onFinal: (p) => send("final", p),
+            // v0.3 编排事件（SPEC 18.2）
+            onPlan: (plan) =>
+              send("plan", {
+                id: plan.id,
+                taskCount: plan.tasks.length,
+                objectives: plan.objectives,
+              }),
+            onTaskStarted: (t) =>
+              send("task_started", { taskId: t.id, title: t.title }),
+            onTaskCompleted: (t, r) =>
+              send("task_completed", {
+                taskId: t.id,
+                status: r.status,
+                evidenceCount: r.evidence.length,
+              }),
+            onTaskFailed: (t, r) =>
+              send("task_failed", { taskId: t.id, status: r.status }),
+            onReview: (rev) =>
+              send("review", { status: rev.status, message: rev.executiveSummary }),
+            onQuestion: (q) => send("question", { questions: q }),
+            onRevision: (rev) =>
+              send("revision", {
+                revisionId: rev.id,
+                sequence: rev.sequence,
+                source: rev.source,
+              }),
+          },
+          { userGoal: body.userGoal },
+        );
 
         await updateAnalysis(datasetId, result); // 内部将 analyzing → completed
         send("done", { provider: result.provider, createdAt: result.createdAt });

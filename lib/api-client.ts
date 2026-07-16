@@ -1,12 +1,15 @@
 import type {
   AnalysisEvidence,
+  AnalysisRevision,
   AnalysisResult,
+  AnalysisSession,
   ChartSpec,
   ComputedInsight,
   DatasetDetail,
   DatasetRow,
   DatasetUnderstanding,
   EChartsOption,
+  FinalAnalysisResult,
   PublicDataset,
   UploadResult,
 } from "./types";
@@ -177,26 +180,43 @@ export interface AnalyzeHooks {
     provider?: "local" | "local+llm";
   }) => void;
   /** v0.2 阶段 H：分析阶段状态(SPEC 13.2) */
-  onStage?: (stage: string) => void;
+  onStage?: (stage: string, code?: string) => void;
   onToken?: (text: string) => void;
   /** SPEC 9.4: final 事件，LLM/local 完成后整体刷新 summary/图表/标题/行动建议 */
-  onFinal?: (p: FinalAnalysisPayload) => void;
+  onFinal?: (p: FinalAnalysisPayload | FinalAnalysisResult) => void;
   onDone?: (meta: {
     provider: "local" | "local+llm";
     createdAt: string;
   }) => void;
   onError?: (message: string) => void;
+  /** v0.3 编排事件（SPEC 18.3，向后兼容：旧回调保留） */
+  onPlan?: (p: { id: string; taskCount: number; objectives: string[] }) => void;
+  onTaskStarted?: (p: { taskId: string; title: string }) => void;
+  onTaskCompleted?: (p: {
+    taskId: string;
+    status: string;
+    evidenceCount: number;
+  }) => void;
+  onTaskFailed?: (p: { taskId: string; status: string }) => void;
+  onReview?: (p: { status: string; message: string }) => void;
+  onQuestion?: (p: { questions: string[] }) => void;
+  onRevision?: (p: {
+    revisionId: string;
+    sequence: number;
+    source: string;
+  }) => void;
 }
 
 /** 触发分析并以 SSE 流式接收结果 */
 export async function runAnalysis(
   datasetId: string,
   hooks: AnalyzeHooks,
+  options?: { userGoal?: string },
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ datasetId }),
+    body: JSON.stringify({ datasetId, userGoal: options?.userGoal }),
   });
 
   if (!res.ok || !res.body) {
@@ -239,6 +259,27 @@ export async function runAnalysis(
           break;
         case "error":
           hooks.onError?.(payload.message ?? "分析出错");
+          break;
+        case "plan":
+          hooks.onPlan?.(payload);
+          break;
+        case "task_started":
+          hooks.onTaskStarted?.(payload);
+          break;
+        case "task_completed":
+          hooks.onTaskCompleted?.(payload);
+          break;
+        case "task_failed":
+          hooks.onTaskFailed?.(payload);
+          break;
+        case "review":
+          hooks.onReview?.(payload);
+          break;
+        case "question":
+          hooks.onQuestion?.(payload);
+          break;
+        case "revision":
+          hooks.onRevision?.(payload);
           break;
       }
     } catch {
@@ -323,7 +364,7 @@ export async function updateUnderstanding(
 }
 
 export interface UnderstandSSEHooks {
-  onStage?: (stage: string) => void;
+  onStage?: (stage: string, code?: string) => void;
   onUnderstanding?: (u: DatasetUnderstanding) => void;
   onAmbiguity?: (u: DatasetUnderstanding) => void;
   onDone?: (status: string) => void;
@@ -373,7 +414,7 @@ export async function runUnderstand(
       const payload = JSON.parse(curData);
       switch (curEvent) {
         case "stage":
-          hooks.onStage?.(payload.stage ?? "");
+          hooks.onStage?.(payload.message ?? payload.stage ?? "", payload.code);
           break;
         case "understanding":
           hooks.onUnderstanding?.(payload.understanding as DatasetUnderstanding);
@@ -409,6 +450,137 @@ export async function runUnderstand(
       } else if (line.trim() === "") {
         dispatch();
       }
+    }
+  }
+  dispatch();
+}
+
+/* ----------------------- v0.3：Session / Feedback / Revision ----------------------- */
+
+export interface RevisionListItem {
+  id: string;
+  sequence: number;
+  status: AnalysisRevision["status"];
+  source: AnalysisRevision["source"];
+  parentRevisionId?: string;
+  summary: string;
+  createdAt: string;
+  isActive: boolean;
+}
+
+export interface AnalysisSessionDetail {
+  session: AnalysisSession;
+  activeRevision: AnalysisRevision | null;
+  revisions: RevisionListItem[];
+}
+
+export async function getAnalysisSession(
+  sessionId: string,
+): Promise<AnalysisSessionDetail> {
+  const res = await fetch(`${BASE}/api/analysis/${sessionId}`);
+  return parse<AnalysisSessionDetail>(res);
+}
+
+export async function getAnalysisRevision(
+  sessionId: string,
+  revisionId: string,
+): Promise<AnalysisRevision> {
+  const res = await fetch(
+    `${BASE}/api/analysis/${sessionId}/revisions/${revisionId}`,
+  );
+  const data = await parse<{ revision: AnalysisRevision }>(res);
+  return data.revision;
+}
+
+export async function restoreAnalysisRevision(
+  sessionId: string,
+  revisionId: string,
+): Promise<{ session: AnalysisSession; revision: AnalysisRevision }> {
+  const res = await fetch(
+    `${BASE}/api/analysis/${sessionId}/revisions/${revisionId}/restore`,
+    { method: "POST" },
+  );
+  return parse<{ session: AnalysisSession; revision: AnalysisRevision }>(res);
+}
+
+export interface FeedbackDoneMeta {
+  provider: "local" | "local+llm";
+  createdAt: string;
+  revisionId: string;
+  impact: {
+    presentationOnly: boolean;
+    affectedTaskIds: string[];
+    reusedTaskIds: string[];
+    reasons: string[];
+  };
+}
+
+export type FeedbackHooks = Omit<AnalyzeHooks, "onDone"> & {
+  onDone?: (meta: FeedbackDoneMeta) => void;
+};
+
+export async function runAnalysisFeedback(
+  sessionId: string,
+  revisionId: string,
+  message: string,
+  hooks: FeedbackHooks,
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/analysis/${sessionId}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ revisionId, message }),
+  });
+  if (!res.ok || !res.body) {
+    let error = `修改请求失败 (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.detail) error = body.detail;
+    } catch {
+      /* ignore */
+    }
+    hooks.onError?.(error);
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let event = "";
+  let data = "";
+  const dispatch = () => {
+    if (!event || !data) return;
+    try {
+      const payload = JSON.parse(data);
+      switch (event) {
+        case "stage": hooks.onStage?.(payload.message ?? payload.stage ?? "", payload.code); break;
+        case "plan": hooks.onPlan?.(payload); break;
+        case "task_started": hooks.onTaskStarted?.(payload); break;
+        case "task_completed": hooks.onTaskCompleted?.(payload); break;
+        case "task_failed": hooks.onTaskFailed?.(payload); break;
+        case "review": hooks.onReview?.(payload); break;
+        case "question": hooks.onQuestion?.(payload); break;
+        case "revision": hooks.onRevision?.(payload); break;
+        case "token": hooks.onToken?.(payload.text ?? ""); break;
+        case "final": hooks.onFinal?.(payload); break;
+        case "done": hooks.onDone?.(payload); break;
+        case "error": hooks.onError?.(payload.message ?? "修改失败"); break;
+      }
+    } catch {
+      /* 忽略坏帧 */
+    }
+    event = "";
+    data = "";
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) data = line.slice(5).trim();
+      else if (!line.trim()) dispatch();
     }
   }
   dispatch();

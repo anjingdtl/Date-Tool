@@ -5,13 +5,28 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import ChartCard from "@/components/ChartCard";
 import InsightPanel from "@/components/InsightPanel";
-import { getDataset, runAnalysis } from "@/lib/api-client";
+import AnalysisTimeline from "@/components/AnalysisTimeline";
+import AnalysisTaskStatus, { type TaskStatusItem } from "@/components/AnalysisTaskStatus";
+import ReviewPanel from "@/components/ReviewPanel";
+import AnalysisChat from "@/components/AnalysisChat";
+import RevisionHistory from "@/components/RevisionHistory";
+import {
+  getAnalysisSession,
+  getDataset,
+  restoreAnalysisRevision,
+  runAnalysis,
+  runAnalysisFeedback,
+  type RevisionListItem,
+} from "@/lib/api-client";
 import type {
+  AnalysisResult,
   AnalysisEvidence,
   ChartSpec,
   ComputedInsight,
   DatasetDetail,
   EChartsOption,
+  FinalAnalysisResult,
+  ReviewStatus,
 } from "@/lib/types";
 
 export default function DashboardPage() {
@@ -42,28 +57,73 @@ export default function DashboardPage() {
   );
   /** v0.2 阶段 H：数据警告(SPEC 8.8/10.7) */
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [analysisMode, setAnalysisMode] = useState<FinalAnalysisResult["analysisMode"]>();
+  const [sessionId, setSessionId] = useState("");
+  const [revisionId, setRevisionId] = useState("");
+  const [reviewStatus, setReviewStatus] = useState<ReviewStatus>();
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [timeline, setTimeline] = useState<string[]>([]);
+  const [tasks, setTasks] = useState<TaskStatusItem[]>([]);
+  const [revisions, setRevisions] = useState<RevisionListItem[]>([]);
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+
+  const applyResult = useCallback((result: AnalysisResult) => {
+    setSummary(result.summary);
+    setInsights(result.insights);
+    setCharts(result.charts);
+    setOptions(result.options);
+    setNarrative(result.narrative);
+    setProvider(result.provider);
+    setEvidence(result.evidence ?? []);
+    setComputedInsights(result.computedInsights ?? []);
+    setWarnings(result.warnings ?? []);
+    if ("analysisMode" in result) {
+      const final = result as FinalAnalysisResult;
+      setAnalysisMode(final.analysisMode);
+      setSessionId(final.sessionId ?? "");
+      setRevisionId(final.revisionId ?? "");
+      setReviewStatus(final.reviewStatus);
+      setQuestions(final.questionsForUser ?? []);
+    } else {
+      setAnalysisMode(undefined);
+      setSessionId("");
+      setRevisionId("");
+      setReviewStatus(undefined);
+      setQuestions([]);
+    }
+  }, []);
+
+  const loadSession = useCallback(async (targetSessionId: string) => {
+    if (!targetSessionId) return;
+    try {
+      const session = await getAnalysisSession(targetSessionId);
+      setRevisions(session.revisions);
+      if (session.activeRevision) {
+        setRevisionId(session.activeRevision.id);
+        setReviewStatus(session.activeRevision.finalResult?.reviewStatus);
+        setQuestions(session.activeRevision.finalResult?.questionsForUser ?? []);
+      }
+    } catch {
+      setRevisions([]);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
       const d = await getDataset(id);
       setDetail(d);
       if (d.analysis) {
-        setSummary(d.analysis.summary);
-        setInsights(d.analysis.insights);
-        setCharts(d.analysis.charts);
-        setOptions(d.analysis.options);
-        setNarrative(d.analysis.narrative);
-        setProvider(d.analysis.provider);
-        setEvidence(d.analysis.evidence ?? []);
-        setComputedInsights(d.analysis.computedInsights ?? []);
-        setWarnings(d.analysis.warnings ?? []);
+        applyResult(d.analysis);
+        if ("sessionId" in d.analysis && d.analysis.sessionId) {
+          await loadSession(String(d.analysis.sessionId));
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载失败");
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [applyResult, id, loadSession]);
 
   useEffect(() => {
     load();
@@ -82,6 +142,10 @@ export default function DashboardPage() {
     setEvidence([]);
     setComputedInsights([]);
     setWarnings([]);
+    setTimeline([]);
+    setTasks([]);
+    setQuestions([]);
+    let completedSessionId = "";
     try {
       await runAnalysis(id, {
         onStructured: (p) => {
@@ -94,7 +158,33 @@ export default function DashboardPage() {
           if (p.warnings) setWarnings(p.warnings);
           if (p.provider) setProvider(p.provider);
         },
-        onStage: (s) => setStage(s),
+        onStage: (s) => {
+          setStage(s);
+          setTimeline((previous) => [...previous, s]);
+        },
+        onPlan: (plan) =>
+          setTimeline((previous) => [...previous, `计划已生成：${plan.taskCount} 个任务`]),
+        onTaskStarted: (task) =>
+          setTasks((previous) => [
+            ...previous.filter((item) => item.id !== task.taskId),
+            { id: task.taskId, title: task.title, status: "running" },
+          ]),
+        onTaskCompleted: (task) =>
+          setTasks((previous) =>
+            previous.map((item) =>
+              item.id === task.taskId ? { ...item, status: "success" } : item,
+            ),
+          ),
+        onTaskFailed: (task) =>
+          setTasks((previous) =>
+            previous.map((item) =>
+              item.id === task.taskId ? { ...item, status: "failed" } : item,
+            ),
+          ),
+        onReview: (review) =>
+          setTimeline((previous) => [...previous, `终审：${review.message}`]),
+        onQuestion: (payload) => setQuestions(payload.questions),
+        onRevision: (revision) => setRevisionId(revision.revisionId),
         onToken: (t) => setNarrative((prev) => prev + t),
         onFinal: (p) => {
           // SPEC 9.4：final 到达后整体刷新，确保 LLM 的 summary/actions/图表标题立即生效
@@ -107,10 +197,19 @@ export default function DashboardPage() {
           if (p.evidence) setEvidence(p.evidence);
           if (p.computedInsights) setComputedInsights(p.computedInsights);
           if (p.warnings) setWarnings(p.warnings);
+          if ("analysisMode" in p) {
+            completedSessionId = p.sessionId ?? "";
+            setAnalysisMode(p.analysisMode);
+            setSessionId(completedSessionId);
+            setRevisionId(p.revisionId ?? "");
+            setReviewStatus(p.reviewStatus);
+            setQuestions(p.questionsForUser ?? []);
+          }
         },
         onDone: (m) => {
           setProvider(m.provider);
           setStage("");
+          if (completedSessionId) void loadSession(completedSessionId);
         },
         onError: (m) => setRunError(m),
       });
@@ -120,7 +219,67 @@ export default function DashboardPage() {
       setStreaming(false);
       setStage("");
     }
-  }, [id]);
+  }, [id, loadSession]);
+
+  const sendFeedback = useCallback(async (message: string) => {
+    if (!sessionId || !revisionId) return;
+    setFeedbackBusy(true);
+    setRunError("");
+    setTimeline([]);
+    setTasks([]);
+    try {
+      await runAnalysisFeedback(sessionId, revisionId, message, {
+        onStage: (value) => {
+          setStage(value);
+          setTimeline((previous) => [...previous, value]);
+        },
+        onPlan: (plan) =>
+          setTimeline((previous) => [...previous, `修改计划已生成：${plan.taskCount} 个任务`]),
+        onTaskStarted: (task) =>
+          setTasks((previous) => [
+            ...previous.filter((item) => item.id !== task.taskId),
+            { id: task.taskId, title: task.title, status: "running" },
+          ]),
+        onTaskCompleted: (task) =>
+          setTasks((previous) =>
+            previous.map((item) => item.id === task.taskId ? { ...item, status: "success" } : item),
+          ),
+        onTaskFailed: (task) =>
+          setTasks((previous) =>
+            previous.map((item) => item.id === task.taskId ? { ...item, status: "failed" } : item),
+          ),
+        onReview: (review) =>
+          setTimeline((previous) => [...previous, `终审：${review.message}`]),
+        onQuestion: (payload) => setQuestions(payload.questions),
+        onRevision: (revision) => setRevisionId(revision.revisionId),
+        onToken: () => {},
+        onFinal: (result) => applyResult(result as FinalAnalysisResult),
+        onDone: (meta) => {
+          setRevisionId(meta.revisionId);
+          void loadSession(sessionId);
+        },
+        onError: (messageText) => setRunError(messageText),
+      });
+    } finally {
+      setFeedbackBusy(false);
+      setStage("");
+    }
+  }, [applyResult, loadSession, revisionId, sessionId]);
+
+  const restoreRevision = useCallback(async (targetRevisionId: string) => {
+    if (!sessionId) return;
+    setFeedbackBusy(true);
+    setRunError("");
+    try {
+      const restored = await restoreAnalysisRevision(sessionId, targetRevisionId);
+      if (restored.revision.finalResult) applyResult(restored.revision.finalResult);
+      await loadSession(sessionId);
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : "恢复 Revision 失败");
+    } finally {
+      setFeedbackBusy(false);
+    }
+  }, [applyResult, loadSession, sessionId]);
 
   if (loading) {
     return (
@@ -163,6 +322,9 @@ export default function DashboardPage() {
           <Link className="btn" href="/">
             返回
           </Link>
+          <Link className="btn" href={`/import/${id}`}>
+            重新理解数据
+          </Link>
           <Link className="btn btn-icon" href="/settings" aria-label="设置" title="设置">
             <span aria-hidden>⚙</span>
           </Link>
@@ -186,11 +348,14 @@ export default function DashboardPage() {
 
       {runError && <div className="banner error">{runError}</div>}
 
+      <AnalysisTimeline events={timeline} active={streaming || feedbackBusy} />
+      <AnalysisTaskStatus tasks={tasks} />
+
       {!hasAnalysis && !streaming && (
         <div className="card">
           <div className="empty">
-            这份数据还没被解读过。点右上角「运行分析」，本地引擎会先算出图表与洞察，
-            可选地再由 LLM 生成自然语言解读～
+            这份数据还没有分析结果。点右上角「运行分析」：配置 LLM 时会按已确认语义制订并执行计划，
+            未配置时自动使用本地规则模式。
           </div>
         </div>
       )}
@@ -208,6 +373,15 @@ export default function DashboardPage() {
             computedInsights={computedInsights}
             warnings={warnings}
           />
+          {analysisMode && (
+            <div className="row">
+              <span className="badge">
+                {analysisMode === "llm_orchestrated" ? "LLM 编排模式" : "本地规则模式"}
+              </span>
+              {revisionId && <span className="badge muted">Revision {revisionId}</span>}
+            </div>
+          )}
+          <ReviewPanel status={reviewStatus} questions={questions} />
           <div className="grid grid-charts">
             {charts.map((c, i) => (
               <ChartCard
@@ -219,6 +393,16 @@ export default function DashboardPage() {
               />
             ))}
           </div>
+          {sessionId && revisionId && (
+            <div className="grid grid-2">
+              <AnalysisChat disabled={feedbackBusy || streaming} onSend={sendFeedback} />
+              <RevisionHistory
+                revisions={revisions}
+                busy={feedbackBusy || streaming}
+                onRestore={restoreRevision}
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

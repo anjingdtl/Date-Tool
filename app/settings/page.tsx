@@ -263,7 +263,7 @@ export default function SettingsPage() {
         <div className="settings-section-head">
           <p className="section-title">LLM 配置</p>
           <p className="muted settings-hint">
-            填入 API Key 后即可启用真实 LLM 解读；不填则使用本地确定性分析（local）。
+            填入 API Key 后启用数据理解、计划、终审和自然语言微调；不填则使用本地规则模式（local）。
             配置修改后无需重启服务器，下一次分析自动生效。
           </p>
         </div>

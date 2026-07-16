@@ -75,7 +75,7 @@ function computeSeries(spec: ChartSpec, rows: DatasetRow[]): SeriesData {
   const seriesNames = [...groups.keys()];
 
   // 排序：折线按 x 升序（适配日期/时间）；柱/饼按总量降序
-  if (spec.type === "line") {
+  if (spec.type === "line" || spec.type === "area") {
     categories.sort();
   } else {
     const totals = new Map<string, number>();
@@ -92,7 +92,7 @@ function computeSeries(spec: ChartSpec, rows: DatasetRow[]): SeriesData {
   if (
     spec.limit &&
     spec.limit > 0 &&
-    (spec.type === "bar" || spec.type === "pie") &&
+    (spec.type === "bar" || spec.type === "stacked_bar" || spec.type === "pie") &&
     categories.length > spec.limit
   ) {
     categories = categories.slice(0, spec.limit);
@@ -162,7 +162,7 @@ export function buildChartOption(
   // ECharts 支持 rich text："{a|{c}}" 等；这里用 rich 模式让数字更显眼
   const series = seriesNames.map((name, gi) => {
     const seriesData = matrix[gi];
-    const isLine = spec.type === "line";
+    const isLine = spec.type === "line" || spec.type === "area";
 
     //    const formatter = isLine ? "{a|{c}}" : "{c}";
     const formatter = "{c}";
@@ -216,6 +216,8 @@ export function buildChartOption(
       itemStyle: { color: PALETTE[gi % PALETTE.length] },
       emphasis: { focus: "series" },
       label: labelCfg,
+      ...(spec.type === "area" ? { areaStyle: { opacity: 0.25 } } : {}),
+      ...(spec.type === "stacked_bar" ? { stack: "total" } : {}),
     };
   });
 

@@ -99,6 +99,7 @@ export const FieldUnderstandingSchema = z.object({
   naturalOrder: z.array(z.string()).optional(),
   confidence: z.number().min(0).max(1),
   reason: z.string(),
+  source: z.enum(["llm", "user", "fallback"]).optional(),
 });
 
 export const FieldRelationshipSchema = z.object({

@@ -1,148 +1,152 @@
-# 企微集约化托管运营 · 可视化数据仪表
+# Date-Tool v0.3.0
 
-把一份 Excel / CSV 拖进来，系统先做数据预检与字段校正，再用**本地确定性引擎**算出所有图表与洞察，最后可选地由 LLM 生成自然语言解读。
-不配大模型密钥也能跑通完整分析流程；LLM 只负责解读，不参与数值计算。
+Date-Tool 是一个本地优先的个人数据分析 Agent：拖入 Excel / CSV 后，LLM 负责理解数据语义、制订分析计划、调度受控工具和终审结果；本地 TypeScript 引擎负责完整数据上的确定性计算、校验、Evidence 与图表编译。
 
-> 世恒哥专属：导入 → 预检校正 → 本地算图 → LLM 解读，一条龙。
+核心边界很简单：LLM 决定“算什么、怎么看”，代码保证“怎么算、画得对”，用户拥有最终修订权。没有配置 LLM 时，系统自动切换到本地规则模式，基础看板仍可完整使用。
 
-## ✨ 功能
+## 主要能力
 
-- **数据导入预检**：拖拽上传 `.xlsx / .xls / .csv`，自动解析、推断列类型与业务角色，进入预检页可校正字段类型 / 角色 / 格式 / 聚合方式。
-- **数据质量报告**：显示原始行数与实际存储行数、空值、重复行、混合类型、日期解析异常、高基数字段等警告。
-- **本地确定性分析**：所有关键数值（总数、均值、环比、分组汇总、状态占比、Top/Bottom、异常值、趋势）由本地代码计算，每条洞察都带可追溯的 `evidenceId` 计算依据。
-- **LLM 仅做解读**：基于 OpenAI 兼容接口（混元 / 通义 / DeepSeek / OpenAI 均可），LLM 只产出总结、叙述、行动建议与图表标题优化，不得修改字段映射或计算结果。
-- **流式输出**：本地结果先于 LLM 文本出现；LLM 叙述以 SSE 分段呈现，完成后 `final` 事件一次性刷新总结/图表/标题，分析阶段状态实时反馈。
-- **可视化看板**：ECharts 渲染的图表墙，支持时间趋势、分组对比、占比构成、原始数据预览，图表复制 PNG / 下载 PNG。
-- **四套主题**：Verdigris、Ocean、Sunset、Ink，液态玻璃 UI。
-- **零原生依赖**：数据集以 JSON 文件原子写入 `.data/`，无需安装数据库；Windows 一键启动脚本。
+- 导入 `.xlsx / .xls / .csv`，预检数据质量并校正物理字段类型、格式和聚合。
+- 基于稳定采样、字段统计与脱敏样本构建 `DataContext`。
+- LLM 在正式分析前识别数据集类型、表格结构、行粒度、字段语义、字段关系和派生指标候选。
+- 用户可在预检页修正并确认 AI 数据理解；阻塞性歧义未处理时不会进入默认编排。
+- LLM 通过受 Zod 约束的 `AnalysisPlan` 选择操作符、字段、聚合、筛选、公式和看板布局。
+- 本地工具注册表执行 `profile / aggregate / timeseries / compare / distribution / ranking / ratio / growth / correlation / anomaly / pivot`。
+- 所有公式使用受控 AST，不使用 `eval`、`new Function`、任意脚本或 SQL。
+- 每个任务生成输入哈希、结果哈希和 Evidence；最终数值只能来自确定性任务结果。
+- LLM 终审可批准、提出问题或追加受控任务，自动修订最多两轮。
+- 看板支持 bar、line、pie、table、area、stacked bar、scatter、heatmap 和 KPI。
+- 用户可用自然语言修改筛选、维度、指标、时间粒度、排序或展示；系统只重算受影响任务及下游依赖。
+- 每次修改形成新 Revision，支持历史查看、撤销和恢复。
+- 四套主题、液态玻璃 UI、ECharts、PNG 复制/下载、SSE 与 Windows 一键启动继续保留。
 
-## 🧱 技术栈
+## 运行方式
 
-| 层 | 选型 |
-|----|------|
-| 框架 | Next.js 14（App Router，前后端同仓） |
-| 前端 | React 18 + ECharts 5 |
-| 解析 | SheetJS(`xlsx`) 读 Excel，PapaParse 读 CSV |
-| 分析 | 本地确定性引擎（`lib/analysis/*`）+ OpenAI 兼容 Chat Completions（仅解读） |
-| 存储 | 文件型 JSON 原子写入（零原生依赖，可平滑替换为 Postgres/SQLite） |
-| 校验 | Zod 严格校验（Dataset ID / FieldConfig / ChartSpec / LLM 输出） |
+### Windows 一键启动
 
-## 🚀 快速开始
+双击根目录的 `start-dev.vbs`。它会清理 3000 端口、启动开发服务并打开浏览器；关闭所有 Date-Tool 页面后服务可自动退出。手动停止可运行 `stop-dev.bat`。
 
-### 一键启动（推荐 · Windows）
+开发日志写入 `logs/dev-server.log`。不要再对启动 bat 套外层重定向，否则 Windows 可能锁住日志文件。
 
-双击项目根目录下的 **`start-dev.vbs`**：
-- ✅ 不弹 cmd 黑窗口
-- ✅ 自动清理 3000 端口旧进程
-- ✅ 自动用默认浏览器打开 http://127.0.0.1:3000
-- ✅ 启动结束弹一个简洁提示框
-- ✅ 关闭浏览器后服务会自动停止（也可手动 `stop-dev.bat`）
-
-需要停止服务时，双击 **`stop-dev.bat`**。
-
-> 日志写在 `logs/dev-server.log`（由 `start-dev.bat` 单独写入；请勿再对 bat 做外层日志重定向，否则 Windows 会锁文件导致启动失败）。
-
-### 命令行启动（跨平台 / 调试）
+### 命令行
 
 ```bash
-# 1. 安装依赖
 npm install
-
-# 2. 准备环境变量（可先不填密钥，走本地模式）
 cp .env.example .env
-
-# 3. 启动开发服务器
 npm run dev
-# 打开 http://localhost:3000
 ```
 
-调试时也可以直接跑 `start-dev.bat`（会弹 cmd 窗口，日志同时输出到屏幕和 `logs/dev-server.log`）。
+打开 <http://127.0.0.1:3000>。
 
-生产构建：
+质量门：
 
 ```bash
-npm run build && npm run start
+npm run typecheck
+npm run test
+npm run build
+npm run check     # 依次执行前三项
 ```
 
-## 🔌 接入真实大模型
+## LLM 配置
 
-编辑 `.env`：
+Date-Tool 使用 OpenAI 兼容 Chat Completions 接口：
 
 ```env
-OPENAI_BASE_URL=https://api.openai.com/v1   # 或混元/通义/DeepSeek 的兼容地址
-OPENAI_API_KEY=sk-xxxx                       # 填上即启用真实 LLM
-OPENAI_MODEL=gpt-4o-mini                     # 自选模型
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=sk-xxxx
+OPENAI_MODEL=gpt-4o-mini
 ```
 
-- **只要 `OPENAI_API_KEY` 非空**，系统在本地分析完成后额外调用 LLM 做解读；留空则只走本地确定性引擎，看板照常有图有洞察。
-- 也可在「设置」页直接填写 API Key / Base URL / 模型名并保存，**无需重启服务器**，下一次分析立即生效；点「清除 API Key」即回到本地模式。
-- LLM 只返回 `summary / narrative / actions / renamedChartTitles`，任何 LLM 调用失败都安全回退本地结果，保证看板始终可用。
+也可在“设置”页保存 API Key、Base URL 和模型名，下一次理解或分析立即生效，无需重启。`OPENAI_*` 与旧 `LLM_*` 环境变量名均兼容。
 
-## 🧭 使用流程
+- 有有效 API Key：`analysisMode = llm_orchestrated`，执行理解 → 计划 → 本地计算 → 终审。
+- 无 API Key，或编排/计划失败：`analysisMode = rule_fallback`，`provider = local`。
+- LLM 规划成功时：`provider = local+llm`。这个值不表示 LLM 计算了数值。
 
-1. 首页拖入一份运营数据表（如各托管账号的留言量、响应时长、满意度等）。
-2. 上传后进入**数据预检页**：查看数据质量报告、校正字段类型/角色/格式/聚合，点「生成看板」确认。
-3. 看板页点「运行分析」：本地引擎先算出图表与洞察（立即可见），再可选地由 LLM 流式生成解读。
-4. 点「查看计算依据」可展开每条洞察背后的 evidence（方法、样本数、字段、计算结果）。
-5. 分析结果随数据集缓存，下次打开直接展示；支持分析历史保留最近 3 次。
+## 使用流程
 
-## 🗂️ 目录结构
+1. 首页上传 Excel / CSV。
+2. 在预检页检查质量、物理字段配置和 AI 数据理解。
+3. 处理阻塞性歧义，修正字段语义后确认。
+4. 在看板运行分析；界面会显示计划、任务执行和终审时间线。
+5. 展开 Evidence 查看任务、字段、样本量、参数和计算结果。
+6. 在“自然语言微调”中提出修改，例如“只看南宁市，按区县展示收入完成率”。
+7. 在 Revision 历史中撤销或恢复旧版本；恢复会创建新 Revision，不删除历史。
 
-```
-app/
-  api/
-    datasets/route.ts                 # POST 上传 / GET 列表
-    datasets/[id]/route.ts            # GET 详情(含分析缓存) / DELETE
-    datasets/[id]/config/route.ts     # PUT 字段配置校正(SPEC 9.7 校验)
-    datasets/[id]/confirm/route.ts    # POST draft→ready 确认
-    analyze/route.ts                  # POST 触发分析（SSE 流式 + stage）
-    settings/route.ts, heartbeat, shutdown
-  dashboard/[id]/page.tsx             # 看板页
-  import/[draftId]/page.tsx           # 数据预检页(SPEC 9)
-  page.tsx                            # 首页（上传 + 列表）
-  layout.tsx, globals.css
-components/
-  Uploader / DatasetList / ChartCard / DataTable / InsightPanel
-  FieldConfigTable / QualityOverview  # 预检页组件
-lib/
-  config.ts        # 环境变量，fail-fast
-  errors.ts        # 类型化错误层级 + 统一响应体 + ConflictError
-  logger.ts        # 结构化 JSON 日志
-  store.ts         # 文件型数据集存储 + 原子写入 + 三文件拆分
-  parse.ts         # CSV/Excel 解析 + 列类型推断 + 质量报告
-  normalize.ts     # 数值/日期标准化(千分位/百分比/金额/Excel序列)
-  llm.ts           # OpenAI 兼容客户端（JSON 30s / 流式 60s 超时）
-  llm-prompt.ts    # LLM 输入构造 + System Prompt + 输出 Zod 校验
-  analyzer.ts      # 分析编排：本地先算 → LLM 仅解读 → 失败回退
-  chart.ts         # 纯函数：ChartSpec + 数据 → ECharts 配置（TopN 截断）
-  api-client.ts    # 前端 typed fetch + SSE 解析（含 stage 事件）
-  types.ts         # 共享类型
-  schemas/         # Zod schemas：dataset / chart / settings
-  analysis/        # 确定性分析引擎(SPEC 10)
-    statistics.ts profile.ts trends.ts comparisons.ts
-    outliers.ts evidence.ts recommend-charts.ts index.ts
-tests/             # Vitest 单元测试
-docs/              # 规格文档
+## 架构概览
+
+```text
+Parse / Preview
+  → Build DataContext（稳定采样 + 敏感值掩码）
+  → LLM Understand → User Confirm
+  → LLM Plan → Zod + 业务规则校验
+  → Deterministic Tool Registry（完整已载入数据）
+  → Evidence + Result Hash
+  → LLM Review（approve / revise / needs_user_input）
+  → Compile Dashboard
+  → User Feedback → PlanPatch → Impact Analysis → Incremental Re-execute
 ```
 
-## 🔧 可扩展方向
+关键目录：
 
-- **持久化**：将 `lib/store.ts` 换成 Postgres / SQLite（保留现有接口即可，上层无感）。
-- **企微直连**：新增 `app/api/wecom/route.ts` 定时拉取托管运营数据写入 store。
-- **追问对话**：基于已解析数据做多轮 Q&A（复用 `lib/llm.ts` 的 `streamChat`）。
-- **鉴权**：按 fullstack 规范加 JWT 中间件与 RBAC。
-- **更多图表**：在 `lib/chart.ts` 增加 `scatter / funnel` 等类型，并在 `analyzer` 的图表推荐里补充。
+```text
+app/api/analysis/       # Session、反馈、Revision 与恢复 API
+app/api/datasets/       # 上传、字段配置、理解与确认 API
+app/api/analyze/        # 初始分析 SSE
+lib/semantic/           # DataContext、脱敏、数据理解
+lib/planner/            # AnalysisPlan 生成、修复、DAG 与校验
+lib/executor/           # 工具注册表、操作符、公式、缓存、图表编译
+lib/reviewer/           # 终审、Evidence 引用校验、Review Patch
+lib/conversation/       # 用户反馈解释、PlanPatch、影响分析、Revision 历史
+lib/orchestrator/       # 初始 Session 与反馈 Revision 编排
+lib/store.ts            # JSON 原子存储、迁移、Session/Revision
+components/             # 预检、看板、时间线、对话与历史 UI
+tests/                  # Vitest 单元与 Route/SSE 测试
+```
 
-## ⚠️ 已知限制
+详细模块边界见 [ARCHITECTURE.md](./ARCHITECTURE.md)。完整工程规格见 [v0.3.0 改造规格](./docs/Date-Tool%20v0.3.0-LLM%20指挥中枢数据分析%20Agent%20改造规格.md)。
 
-- 单数据集默认最多存 5 万行（超出的部分截断，分析结论会注明「基于已载入数据」）。
-- 不依赖 LLM 也能完成完整分析；接入 LLM 后额外获得自然语言解读与图表标题优化。
-- 本工具面向个人本地使用，不做多用户 / 登录 / RBAC / 云端数据库。
-- 图表配置在服务端预计算后随分析结果缓存，因此看板页无需搬运原始数据，轻量渲染。
+## API 与 SSE
 
-## 📚 更多文档
+- `POST /api/datasets/{id}/understand`：运行数据理解（SSE）。
+- `GET|PUT /api/datasets/{id}/understanding`：读取、修正和确认理解。
+- `POST /api/analyze`：启动初始分析（SSE）。
+- `GET /api/analysis/{sessionId}`：读取 Session、当前 Revision 和历史摘要。
+- `POST /api/analysis/{sessionId}/feedback`：自然语言微调（SSE）。
+- `GET /api/analysis/{sessionId}/revisions/{revisionId}`：读取 Revision。
+- `POST /api/analysis/{sessionId}/revisions/{revisionId}/restore`：恢复历史版本。
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) —— 架构与数据流说明
-- [CHANGELOG.md](./CHANGELOG.md) —— 版本变更记录
-- [docs/Date-Tool-v0.2.1-closure-spec.md](./docs/Date-Tool-v0.2.1-closure-spec.md) —— v0.2.1 收尾改造规格
-- [docs/Date-Tool-v0.2-optimization-spec.md](./docs/Date-Tool-v0.2-optimization-spec.md) —— v0.2 改造规格说明书
+编排 SSE 事件包括 `stage / plan / task_started / task_completed / task_failed / review / question / revision / token / final / done / error`，并继续兼容 v0.2 的 `result` 事件。
+
+## 安全与隐私
+
+- 原始完整行只保存在本机 `.data/`；默认只向 LLM 发送统计、结构和最多 40 条稳定采样行。
+- 姓名、手机号、邮箱、身份证、账号、地址、设备 ID、客户编号和订单号等候选敏感值会稳定掩码。
+- 单元格、字段名和 Sheet 名均视为不可信数据，不会被当作系统指令。
+- LLM 输出必须通过 Zod；字段引用、聚合、公式、依赖和图表关联还会经过服务端业务校验。
+- 对话输入最多 4000 字符；计划、公式、自动修订、Session 和 Revision 均有硬上限。
+- 日志不记录 API Key、完整 Prompt、完整原始行或敏感原值。
+
+## 存储与兼容
+
+```text
+.data/datasets/{datasetId}/
+  meta.json
+  rows.json
+  analyses.json
+  context.json
+  understanding.json
+  sessions/{sessionId}/
+    session.json
+    revisions/{revisionId}.json
+```
+
+写入采用同路径串行的“临时文件 → fsync/关闭 → rename”。旧 v0.2.1 数据集和 analysis 继续可读；读取旧数据不会自动调用 LLM。单数据集默认最多保存 5 个 Session，每个 Session 最多 20 个 Revision。
+
+## 已知限制
+
+- 单数据集默认最多存储 5 万行，超出部分会截断，理解、终审和最终警告会明确说明分析基于已载入数据。
+- 工具面向个人本地使用，不包含登录、多用户、云数据库、任意 SQL/Python、PDF/Excel 导出或实时流计算。
+- 任务缓存目前是进程内 LRU；重启后会重新计算，但结果仍可从 Revision 历史读取。
+
+版本记录见 [CHANGELOG.md](./CHANGELOG.md)。

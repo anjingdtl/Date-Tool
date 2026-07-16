@@ -55,6 +55,7 @@ export function validateAnalysisPlan(
 
   // 规则 1：ID 唯一
   const idSeen = new Set<string>();
+  const canonicalSeen = new Map<string, string>();
   for (const t of plan.tasks) {
     if (idSeen.has(t.id))
       issues.push({
@@ -64,6 +65,32 @@ export function validateAnalysisPlan(
         level: "error",
       });
     idSeen.add(t.id);
+    const canonical = JSON.stringify({
+      operator: t.operator,
+      dimensions: t.dimensions,
+      metrics: t.metrics,
+      filters: t.filters,
+      aggregation: t.aggregation,
+      time: t.time,
+      formula: t.formula,
+      compareMode: t.compareMode,
+      anomalyMethod: t.anomalyMethod,
+      sort: t.sort,
+      limit: t.limit,
+      dependsOn: t.dependsOn,
+      expectedOutput: t.expectedOutput,
+    });
+    const duplicateOf = canonicalSeen.get(canonical);
+    if (duplicateOf) {
+      issues.push({
+        code: "DUPLICATE_TASK_DEFINITION",
+        taskId: t.id,
+        message: `任务「${t.id}」与「${duplicateOf}」计算定义重复`,
+        level: "error",
+      });
+    } else {
+      canonicalSeen.set(canonical, t.id);
+    }
   }
 
   // 规则 5：任务数硬上限

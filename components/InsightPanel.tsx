@@ -30,7 +30,7 @@ function providerLabel(p?: string): string {
     case "local":
       return "本地确定性分析";
     case "local+llm":
-      return "本地计算 + LLM 解读";
+      return "LLM 编排 + 本地确定性计算";
     default:
       return "";
   }
@@ -79,7 +79,7 @@ export default function InsightPanel({
     <div className="card">
       <div className="row spread" style={{ marginBottom: 12 }}>
         <p className="section-title" style={{ margin: 0 }}>
-          占卜师解读
+          分析结论
         </p>
         {provider && (
           <span

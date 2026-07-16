@@ -1,46 +1,31 @@
 /**
  * tests/analyzer.test.ts
  *
- * 阶段 G4:覆盖 analyzeDataset 的 LLM 禁用/启用/超时回退/renamedChartTitles 路径。
+ * v0.3 门面测试（SPEC 14.1）：
+ * - LLM 未启用 / 无已确认 Understanding → runLocalFallbackAnalysis（provider=local）；
+ * - LLM 启用 + confirmed Understanding → runOrchestratedAnalysis（mock runAnalysisSession）。
  *
- * mock 策略:
- * - vi.mock("@/lib/llm-config") 控制 getActiveLLMConfig().enabled（SPEC 6 单一入口）;
- * - vi.mock("@/lib/llm") 控制 chatJSON 返回值或抛错。
+ * v0.2.1 本地降级路径继续通过（SPEC 4.2）。
  */
-
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-/* ------------------------- mock LLM 与 config ------------------------- */
-
-/**
- * 用 vi.hoisted 提升共享状态,使 mock 工厂能引用。
- * - enabled: 控制 getActiveLLMConfig().enabled;
- * - shouldThrow: chatJSON 是否抛错(模拟超时);
- * - response: chatJSON 默认返回值;
- * - capturedCharts: 在 onStructured 时捕获本地 charts,用于动态构造 renamedChartTitles。
- */
 const state = vi.hoisted(() => ({
   enabled: false,
-  shouldThrow: false,
-  response: null as unknown,
-  capturedCharts: [] as Array<{ id: string; title: string }>,
+  understanding: null as unknown,
+  orchResult: null as unknown,
 }));
 
-vi.mock("@/lib/llm-config", () => ({
-  getActiveLLMConfig: vi.fn(),
-}));
-
-vi.mock("@/lib/llm", () => ({
-  chatJSON: vi.fn(),
-  streamChat: vi.fn(),
+vi.mock("@/lib/llm-config", () => ({ getActiveLLMConfig: vi.fn() }));
+vi.mock("@/lib/store", () => ({ getUnderstanding: vi.fn() }));
+vi.mock("@/lib/orchestrator/run-analysis-session", () => ({
+  runAnalysisSession: vi.fn(),
 }));
 
 import { analyzeDataset } from "@/lib/analyzer";
-import { chatJSON } from "@/lib/llm";
 import { getActiveLLMConfig } from "@/lib/llm-config";
-import type { ColumnMeta, DatasetRow, StoredDataset } from "@/lib/types";
-
-/* ------------------------- 夹具 ------------------------- */
+import { getUnderstanding } from "@/lib/store";
+import { runAnalysisSession } from "@/lib/orchestrator/run-analysis-session";
+import type { ColumnMeta, DatasetRow, DatasetUnderstanding, FinalAnalysisResult, StoredDataset } from "@/lib/types";
 
 function makeColumn(over: Partial<ColumnMeta> = {}): ColumnMeta {
   return {
@@ -51,12 +36,6 @@ function makeColumn(over: Partial<ColumnMeta> = {}): ColumnMeta {
     defaultAggregation: over.defaultAggregation ?? "sum",
     includeInAnalysis: over.includeInAnalysis ?? true,
     sampleValues: over.sampleValues ?? [],
-    nullable: over.nullable ?? false,
-    nullCount: over.nullCount ?? 0,
-    nullRate: over.nullRate ?? 0,
-    distinctCount: over.distinctCount,
-    confidence: over.confidence ?? 1,
-    userModified: over.userModified ?? false,
   };
 }
 
@@ -72,37 +51,13 @@ const rows: DatasetRow[] = [
 ];
 
 const columns: ColumnMeta[] = [
-  makeColumn({
-    name: "日期",
-    type: "date",
-    role: "time",
-    format: "date",
-    defaultAggregation: "count",
-  }),
-  makeColumn({
-    name: "客户",
-    type: "string",
-    role: "dimension",
-    format: "plain",
-    defaultAggregation: "count",
-  }),
-  makeColumn({
-    name: "金额",
-    type: "number",
-    role: "metric",
-    format: "currency",
-    defaultAggregation: "sum",
-  }),
-  makeColumn({
-    name: "状态",
-    type: "string",
-    role: "status",
-    format: "plain",
-    defaultAggregation: "count",
-  }),
+  makeColumn({ name: "日期", type: "date", role: "time", format: "date", defaultAggregation: "count" }),
+  makeColumn({ name: "客户", type: "string", role: "dimension", defaultAggregation: "count" }),
+  makeColumn({ name: "金额", type: "number", role: "metric", format: "currency", defaultAggregation: "sum" }),
+  makeColumn({ name: "状态", type: "string", role: "status", defaultAggregation: "count" }),
 ];
 
-function makeDataset(over: Partial<StoredDataset> = {}): StoredDataset {
+function makeDataset(): StoredDataset {
   return {
     id: "00000000-0000-4000-8000-000000000000",
     name: "测试集",
@@ -113,7 +68,9 @@ function makeDataset(over: Partial<StoredDataset> = {}): StoredDataset {
     storedRowCount: rows.length,
     columns,
     rows,
-    createdAt: new Date().toISOString(),
+    createdAt: "2026-07-16T00:00:00.000Z",
+    status: "ready",
+    analysis: null,
     quality: {
       originalRowCount: rows.length,
       storedRowCount: rows.length,
@@ -121,24 +78,57 @@ function makeDataset(over: Partial<StoredDataset> = {}): StoredDataset {
       duplicateRowCount: 0,
       emptyRowCount: 0,
       warnings: [],
-      generatedAt: new Date().toISOString(),
+      generatedAt: "2026-07-16T00:00:00.000Z",
     },
-    status: "ready",
-    analysis: null,
-    ...over,
   };
 }
 
-/* ------------------------- 公共 beforeEach ------------------------- */
+function confirmedUnderstanding(): DatasetUnderstanding {
+  return {
+    version: "v1",
+    id: "und_1",
+    datasetId: "00000000-0000-4000-8000-000000000000",
+    datasetKind: "transaction",
+    tableShape: "tidy_rows",
+    businessDomain: "销售",
+    businessDescription: "销售明细",
+    grainDescription: "每行一笔",
+    rowMeaning: "销售记录",
+    selectedSheets: ["Sheet1"],
+    fields: [
+      { field: "日期", semanticName: "日期", role: "time", measureBehavior: "unknown", subRole: "time_part", businessMeaning: "日期", recommendedAggregation: "none", confidence: 0.9, reason: "日期" },
+      { field: "金额", semanticName: "金额", role: "metric", measureBehavior: "currency", subRole: "actual", businessMeaning: "金额", recommendedAggregation: "sum", confidence: 0.9, reason: "金额" },
+    ],
+    relationships: [],
+    derivedMetrics: [],
+    recommendedObjectives: [],
+    ambiguities: [],
+    confidence: 0.85,
+    status: "confirmed",
+    createdAt: "2026-07-16T00:00:00.000Z",
+    confirmedAt: "2026-07-16T00:00:00.000Z",
+  };
+}
+
+function mockFinalResult(): FinalAnalysisResult {
+  return {
+    provider: "local+llm",
+    summary: "orch summary",
+    insights: ["[positive] t"],
+    charts: [],
+    options: [],
+    narrative: "orch narrative",
+    createdAt: "2026-07-16T00:00:00.000Z",
+    version: "v0.3.0",
+    analysisMode: "llm_orchestrated",
+    reviewStatus: "approved",
+  };
+}
 
 beforeEach(() => {
   state.enabled = false;
-  state.shouldThrow = false;
-  state.response = null;
-  state.capturedCharts = [];
-  // 统一运行时 LLM 配置入口：enabled 由 state 决定（替代旧 config.llm.enabled）
-  // 用 mockImplementation 实时读 state.enabled，保证内层 describe 的 beforeEach
-  // 修改 state 后，analyzer 调用拿到最新值（与旧 config getter 行为一致）
+  state.understanding = null;
+  state.orchResult = null;
   vi.mocked(getActiveLLMConfig).mockReset();
   vi.mocked(getActiveLLMConfig).mockImplementation(async () => ({
     provider: "test",
@@ -147,287 +137,133 @@ beforeEach(() => {
     model: "test-model",
     enabled: state.enabled,
   }));
-  // 每个测试前重置 chatJSON 为默认实现:按 state 决定抛错或返回 response
-  vi.mocked(chatJSON).mockReset();
-  vi.mocked(chatJSON).mockImplementation(async () => {
-    if (state.shouldThrow) {
-      throw new Error("LLM 结构化解读超时");
-    }
-    return state.response;
+  vi.mocked(getUnderstanding).mockReset();
+  vi.mocked(getUnderstanding).mockImplementation(async () => state.understanding as DatasetUnderstanding | null);
+  vi.mocked(runAnalysisSession).mockReset();
+  vi.mocked(runAnalysisSession).mockImplementation(async (input) => {
+    const r = state.orchResult as { finalResult?: unknown } | null;
+    if (r?.finalResult) input.hooks.onFinal?.(r.finalResult as never);
+    return state.orchResult as never;
   });
 });
 
-/* ------------------------- LLM 禁用 ------------------------- */
-
-describe("analyzeDataset - LLM 禁用", () => {
-  it("provider 为 local", async () => {
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-1", {
+describe("analyzeDataset 门面 - 本地降级（SPEC 14.1 / 4.2）", () => {
+  it("LLM 禁用 → provider=local", async () => {
+    const result = await analyzeDataset(makeDataset(), "req-1", {
       onNarrativeToken: () => {},
     });
     expect(result.provider).toBe("local");
+    expect(runAnalysisSession).not.toHaveBeenCalled();
   });
 
-  it("onStructured 立即发送本地结果,provider=local", async () => {
-    const ds = makeDataset();
-    let structured: {
-      provider: string;
-      evidence?: unknown[];
-      computedInsights?: unknown[];
-      warnings?: string[];
-    } | null = null;
-    await analyzeDataset(ds, "req-2", {
-      onStructured: (p) => {
-        structured = p;
-      },
-      onNarrativeToken: () => {},
-    });
-    expect(structured).not.toBeNull();
-    expect(structured!.provider).toBe("local");
-    expect(Array.isArray(structured!.evidence)).toBe(true);
-    expect(Array.isArray(structured!.computedInsights)).toBe(true);
-    expect(Array.isArray(structured!.warnings)).toBe(true);
-  });
-
-  it("onStage 至少触发一次,且含计算阶段", async () => {
-    const ds = makeDataset();
-    const stages: string[] = [];
-    await analyzeDataset(ds, "req-3", {
-      onStage: (s) => stages.push(s),
-      onNarrativeToken: () => {},
-    });
-    expect(stages.length).toBeGreaterThan(0);
-    expect(stages.some((s) => s.includes("计算"))).toBe(true);
-  });
-
-  it("narrative 为本地兜底文本", async () => {
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-4", {
-      onNarrativeToken: () => {},
-    });
-    expect(result.narrative).toContain("通读");
-  });
-
-  it("onNarrativeToken 至少触发一次", async () => {
-    const ds = makeDataset();
-    const tokens: string[] = [];
-    await analyzeDataset(ds, "req-5", {
-      onNarrativeToken: (t) => tokens.push(t),
-    });
-    expect(tokens.join("").length).toBeGreaterThan(0);
-  });
-
-  it("不调用 chatJSON", async () => {
-    const ds = makeDataset();
-    await analyzeDataset(ds, "req-6", {
-      onNarrativeToken: () => {},
-    });
-    expect(chatJSON).not.toHaveBeenCalled();
-  });
-});
-
-/* ------------------------- LLM 启用且成功 ------------------------- */
-
-describe("analyzeDataset - LLM 启用且成功", () => {
-  beforeEach(() => {
+  it("LLM 启用但无 Understanding → 回退本地", async () => {
     state.enabled = true;
-    state.response = {
-      summary: "LLM 总结:数据整体平稳",
-      narrative: "这是 LLM 生成的解读,包含两个关键信号。建议关注甲客户。",
-      actions: ["建议一:核查预警记录", "建议二:跟进甲客户"],
-    };
-  });
-
-  it("provider 为 local+llm", async () => {
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-7", {
+    state.understanding = null;
+    const result = await analyzeDataset(makeDataset(), "req-2", {
       onNarrativeToken: () => {},
     });
-    expect(result.provider).toBe("local+llm");
+    expect(result.provider).toBe("local");
+    expect(runAnalysisSession).not.toHaveBeenCalled();
   });
 
-  it("使用 LLM 的 summary", async () => {
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-8", {
-      onNarrativeToken: () => {},
-    });
-    expect(result.summary).toBe("LLM 总结:数据整体平稳");
-  });
-
-  it("LLM 的 actions 被追加到 insights", async () => {
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-9", {
-      onNarrativeToken: () => {},
-    });
-    expect(result.insights.some((s) => s.includes("建议一"))).toBe(true);
-    expect(result.insights.some((s) => s.includes("建议二"))).toBe(true);
-  });
-
-  it("narrative 来自 LLM", async () => {
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-10", {
-      onNarrativeToken: () => {},
-    });
-    expect(result.narrative).toContain("LLM 生成的解读");
-  });
-
-  it("应用 renamedChartTitles(动态捕获图表 id 后改名)", async () => {
-    const ds = makeDataset();
-    // 在 chatJSON 调用时,onStructured 已先触发并填充 state.capturedCharts。
-    // 对每个捕获到的 chart.id 构造新标题,验证 LLM 只能改标题不能改字段。
-    vi.mocked(chatJSON).mockImplementation(async () => {
-      const renamed: Record<string, string> = {};
-      for (const c of state.capturedCharts) {
-        renamed[c.id] = `改名_${c.id}`;
-      }
-      return {
-        summary: "s",
-        narrative: "n",
-        actions: [],
-        renamedChartTitles: renamed,
-      };
-    });
-
-    const result = await analyzeDataset(ds, "req-11", {
-      onStructured: (p) => {
-        state.capturedCharts = p.charts;
-      },
-      onNarrativeToken: () => {},
-    });
-
-    expect(result.charts.length).toBeGreaterThan(0);
-    for (const c of result.charts) {
-      expect(c.title).toBe(`改名_${c.id}`);
-    }
-  });
-
-  it("LLM 未提供 renamedChartTitles 时保留原标题", async () => {
-    const ds = makeDataset();
-    const beforeTitles: string[] = [];
-    const result = await analyzeDataset(ds, "req-12", {
-      onStructured: (p) => {
-        beforeTitles.push(...p.charts.map((c) => c.title));
-      },
-      onNarrativeToken: () => {},
-    });
-    expect(result.charts.map((c) => c.title)).toEqual(beforeTitles);
-  });
-
-  it("renamedChartTitles 里的无效 id 不会影响其他图表", async () => {
-    const ds = makeDataset();
-    vi.mocked(chatJSON).mockImplementation(async () => {
-      // 仅对一个不存在的 id 改名,真实图表标题应保持不变
-      return {
-        summary: "s",
-        narrative: "n",
-        actions: [],
-        renamedChartTitles: { "nonexistent-id": "不会生效的标题" },
-      };
-    });
-    const beforeTitles: string[] = [];
-    const result = await analyzeDataset(ds, "req-13", {
-      onStructured: (p) => {
-        beforeTitles.push(...p.charts.map((c) => c.title));
-      },
-      onNarrativeToken: () => {},
-    });
-    expect(result.charts.map((c) => c.title)).toEqual(beforeTitles);
-  });
-});
-
-/* ------------------------- LLM 失败回退 ------------------------- */
-
-describe("analyzeDataset - LLM 失败回退", () => {
-  beforeEach(() => {
+  it("LLM 启用但 Understanding 未确认 → 回退本地", async () => {
     state.enabled = true;
-  });
-
-  it("chatJSON 抛错(超时)时回退 local", async () => {
-    state.shouldThrow = true;
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-14", {
+    const u = confirmedUnderstanding();
+    u.status = "ready_for_confirmation";
+    state.understanding = u;
+    const result = await analyzeDataset(makeDataset(), "req-3", {
       onNarrativeToken: () => {},
     });
     expect(result.provider).toBe("local");
-    expect(result.narrative).toContain("通读");
+    expect(runAnalysisSession).not.toHaveBeenCalled();
   });
 
-  it("LLM 返回无效 schema(空 summary)时回退 local", async () => {
-    state.response = { summary: "", narrative: "", actions: [] };
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-15", {
-      onNarrativeToken: () => {},
-    });
-    expect(result.provider).toBe("local");
-  });
-
-  it("LLM 返回非对象时回退 local", async () => {
-    state.response = "not an object";
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-16", {
-      onNarrativeToken: () => {},
-    });
-    expect(result.provider).toBe("local");
-  });
-
-  it("回退时仍发送 onStructured 本地结果", async () => {
-    state.shouldThrow = true;
-    const ds = makeDataset();
+  it("本地降级发送 onStructured + onFinal", async () => {
     let structuredProvider: string | null = null;
-    await analyzeDataset(ds, "req-17", {
+    let finalProvider: string | null = null;
+    await analyzeDataset(makeDataset(), "req-4", {
       onStructured: (p) => {
         structuredProvider = p.provider;
       },
       onNarrativeToken: () => {},
+      onFinal: (p) => {
+        finalProvider = (p as { provider: string }).provider;
+      },
     });
     expect(structuredProvider).toBe("local");
+    expect(finalProvider).toBe("local");
   });
 
-  it("回退时 onStage 仍触发 LLM 阶段提示", async () => {
-    state.shouldThrow = true;
-    const ds = makeDataset();
-    const stages: string[] = [];
-    await analyzeDataset(ds, "req-18", {
-      onStage: (s) => stages.push(s),
+  it("本地降级 narrative 含本地兜底文本", async () => {
+    const result = await analyzeDataset(makeDataset(), "req-5", {
       onNarrativeToken: () => {},
     });
-    expect(stages.some((s) => s.includes("LLM"))).toBe(true);
+    expect(result.narrative).toContain("通读");
   });
-});
 
-/* ------------------------- 结果完整性 ------------------------- */
-
-describe("analyzeDataset - 结果完整性", () => {
-  it("返回的 AnalysisResult 含 evidence/computedInsights/warnings/version", async () => {
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-19", {
+  it("本地降级结果含 evidence/computedInsights/warnings", async () => {
+    const result = await analyzeDataset(makeDataset(), "req-6", {
       onNarrativeToken: () => {},
     });
     expect(Array.isArray(result.evidence)).toBe(true);
     expect(Array.isArray(result.computedInsights)).toBe(true);
-    expect(Array.isArray(result.warnings)).toBe(true);
-    expect(result.version).toBe("v0.2.1");
     expect(result.charts.length).toBeGreaterThan(0);
     expect(result.options.length).toBe(result.charts.length);
+    expect((result as FinalAnalysisResult).analysisMode).toBe("rule_fallback");
+    expect(result.version).toBe("v0.3.0");
   });
 
-  it("每条 computedInsight 引用有效 evidenceId", async () => {
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-20", {
+  it("计划/编排失败时自动回退本地，不让整个分析失败", async () => {
+    state.enabled = true;
+    state.understanding = confirmedUnderstanding();
+    vi.mocked(runAnalysisSession).mockRejectedValueOnce(new Error("计划校验失败"));
+    const stages: string[] = [];
+    const result = await analyzeDataset(makeDataset(), "req-fallback", {
+      onNarrativeToken: () => {},
+      onStage: (stage) => stages.push(stage),
+    });
+    expect(result.provider).toBe("local");
+    expect((result as FinalAnalysisResult).analysisMode).toBe("rule_fallback");
+    expect(stages.some((stage) => stage.includes("本地规则模式"))).toBe(true);
+  });
+});
+
+describe("analyzeDataset 门面 - LLM 编排", () => {
+  it("confirmed Understanding → 调用 orchestrator，provider=local+llm", async () => {
+    state.enabled = true;
+    state.understanding = confirmedUnderstanding();
+    state.orchResult = {
+      session: { id: "sess_1" },
+      activeRevision: { id: "rev_1" },
+      finalResult: mockFinalResult(),
+    };
+    const result = await analyzeDataset(makeDataset(), "req-7", {
       onNarrativeToken: () => {},
     });
-    const evIds = new Set((result.evidence ?? []).map((e) => e.id));
-    expect(evIds.size).toBeGreaterThan(0);
-    for (const ins of result.computedInsights ?? []) {
-      expect(evIds.has(ins.evidenceId)).toBe(true);
-    }
+    expect(runAnalysisSession).toHaveBeenCalledTimes(1);
+    expect(result.provider).toBe("local+llm");
+    expect((result as FinalAnalysisResult).analysisMode).toBe("llm_orchestrated");
+    expect((result as FinalAnalysisResult).reviewStatus).toBe("approved");
   });
 
-  it("options 与 charts 一一对应", async () => {
-    const ds = makeDataset();
-    const result = await analyzeDataset(ds, "req-21", {
+  it("orchestrator 透传 hooks（onPlan/onFinal）", async () => {
+    state.enabled = true;
+    state.understanding = confirmedUnderstanding();
+    state.orchResult = {
+      session: { id: "sess_1" },
+      activeRevision: { id: "rev_1" },
+      finalResult: mockFinalResult(),
+    };
+    let finalCalled = false;
+    await analyzeDataset(makeDataset(), "req-8", {
       onNarrativeToken: () => {},
+      onFinal: () => {
+        finalCalled = true;
+      },
     });
-    expect(result.options.length).toBe(result.charts.length);
+    expect(finalCalled).toBe(true);
+    // runAnalysisSession 收到 hooks
+    const call = vi.mocked(runAnalysisSession).mock.calls[0][0];
+    expect(call.hooks.onFinal).toBeTypeOf("function");
   });
 });

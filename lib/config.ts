@@ -28,7 +28,7 @@ export const config = {
     baseUrl: llmBaseUrl,
     apiKey: llmApiKey,
     model: llmModel,
-    /** 配置了他家 key 才启用真实 LLM，否则走本地 Mock 分析器 */
+    /** 配置 API Key 后启用 LLM 编排，否则走本地规则分析。 */
     get enabled(): boolean {
       return this.apiKey.length > 0;
     },

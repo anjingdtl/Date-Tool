@@ -1,136 +1,210 @@
 # Date-Tool 架构说明
 
-> 版本：v0.2.1  
-> 定位：个人本地数据分析与辅助图表工具
+> 版本：v0.3.0
+> 定位：LLM 指挥、本地确定性执行的个人数据分析 Agent
 
----
+## 1. 架构原则
 
-## 1. 设计原则
+1. **LLM 有分析决策权，没有数值修改权**：LLM 理解语义、制订计划、终审和解释用户反馈；最终数值只能来自本地任务结果。
+2. **用户事实优先**：用户当前指令 > 已确认 Understanding > 预检字段配置 > LLM 推断 > 启发式候选 > 默认规则。
+3. **受控协议**：Understanding、Plan、Review、PlanPatch 和公式 AST 均有 Zod Schema 与额外业务校验。
+4. **本地优先**：完整行保存在本机，确定性工具在全部已载入数据上执行；无 LLM 时本地规则模式仍可用。
+5. **可追溯**：任务具有稳定 ID、输入哈希、结果哈希和 Evidence，最终洞察只能引用有效 Evidence。
+6. **失败保留最后有效版本**：非法 Patch、失败 Revision 或 LLM 故障不会覆盖当前 active Revision。
+7. **自动循环有限**：计划 JSON 最多修复两次，终审最多自动追加两轮，任务/Session/Revision/公式均有硬上限。
 
-1. **本地优先**：默认本机访问，数据存 `.data/`，不要求数据库，不依赖 LLM 也能完成分析。
-2. **确定性计算优先**：所有关键数值由本地代码计算，LLM 只负责解读与建议。
-3. **用户可校正**：自动推断不等于最终事实，字段类型 / 角色 / 格式均可人工修正。
-4. **保持轻量**：沿用 Next.js + TypeScript + Zod + ECharts + 文件存储，不引入重型框架。
-5. **保留视觉资产**：四套主题、液态玻璃 UI、SSE 流式、PNG 复制下载、Windows 一键启动全部保留。
+## 2. 主数据流
 
----
-
-## 2. 数据流
-
-```
-拖入文件
+```text
+上传 Excel / CSV
   ↓
-parse.ts 解析(RawSheet → profileColumn 均匀采样 → normalizeRowsByColumns → generateDataQuality)
+parse + normalize + quality
   ↓
-POST /api/datasets  →  存储 status=draft
+draft 数据集 → 预检字段校正
   ↓
-跳转 /import/[draftId]  预检页
-  ├─ 文件摘要(原始行数 / 存储行数 / 截断)
-  ├─ 数据质量概览(空值/重复/混合类型/日期异常/非法数字/高基数)
-  ├─ 字段配置表(类型/角色/格式/聚合/是否参与分析 可编辑)
-  ├─ 前 20 行预览
-  └─ 生成看板 → PUT /config 校正 → POST /confirm (重规范化 rows + 重算质量, draft→ready)
+buildDataContext
+  ├─ 物理类型、空值、分布、数值/日期统计
+  ├─ 稳定头中尾/等距/固定种子采样
+  └─ 敏感值稳定掩码、token budget 裁剪
   ↓
-跳转 /dashboard/[id]  看板页
+LLM Understanding → 用户修正/确认
   ↓
-POST /api/analyze  (SSE 流式, 状态校验: draft/analyzing → 409)
-  ├─ stage: 正在计算数据质量与统计结果
-  ├─ result: 本地 structured (charts + insights + evidence + warnings, provider=local)
-  ├─ stage: 正在生成 LLM 解读  (仅当 LLM 启用)
-  ├─ token × N: 分段 narrative
-  ├─ final: 最终 summary/insights/charts/options/provider（一次性刷新前端）
-  └─ done: { provider, createdAt }
+ready → POST /api/analyze
   ↓
-updateAnalysis 持久化(原子写入, analyzing→completed；失败→error 可重试)
-```
-
----
-
-## 3. 数据集状态机
-
-```
-上传 → draft → confirm → ready → analyze → completed
-                                    ↓
-                                  error (失败可重试)
+createAnalysisPlan → Zod + 20 类业务校验 → 依赖 DAG
+  ↓
+executePlan → Tool Registry → TaskExecutionResult + Evidence
+  ↓
+reviewExecution
+  ├─ approved
+  ├─ revise → 受控 PlanPatch → 新 Revision → 最多 2 轮
+  └─ needs_user_input → 保留结果并等待用户
+  ↓
+compileDashboard → FinalAnalysisResult → active Revision
+  ↓
+用户反馈 → PlanPatch → impact analysis → 增量重算 → 再终审
 ```
 
-- `draft`：刚上传，未确认字段配置，禁止直接分析。
-- `ready`：用户确认字段配置后，允许分析。
-- `analyzing` / `completed` / `error`：分析过程中的过渡态。
+## 3. 状态与事实来源
 
----
+### DatasetStatus
+
+```text
+draft → ready → analyzing → completed
+                         └→ error（可重试）
+```
+
+DatasetStatus 只表达数据集外层状态，不承载全部编排阶段。
+
+### UnderstandingStatus
+
+`not_started / building_context / understanding / needs_user_input / ready_for_confirmation / confirmed / failed / fallback`
+
+### AnalysisSessionStatus
+
+`planning / validating_plan / executing / reviewing / needs_user_input / revising / completed / error / cancelled`
+
+### RevisionStatus
+
+`draft / executing / reviewing / approved / needs_user_input / failed`
+
+权威来源：
+
+| 事实 | 单一来源 |
+|---|---|
+| 物理类型 | `ColumnMeta.type` |
+| 业务语义 | active Revision 的 `understandingSnapshot` / 当前 confirmed Understanding |
+| 当前计划 | active Revision 的 `plan` |
+| 数值 | `TaskExecutionResult` |
+| 证据 | `AnalysisEvidence` |
+| 看板顺序 | `AnalysisPlan.dashboard` |
+| 用户修改 | `AnalysisPlanPatch` |
+| 当前版本 | `AnalysisSession.activeRevisionId` |
+| 最终展示 | active Revision 的 `finalResult` |
 
 ## 4. 模块职责
 
-### 4.1 解析层
+### 4.1 解析与语义
 
 | 模块 | 职责 |
-|------|------|
-| `lib/parse.ts` | CSV/Excel 解析、列类型推断（均匀采样 500 行 + typeDistribution）、行数记录 |
-| `lib/normalize.ts` | 数值/日期/布尔标准化、`normalizeRowsByColumns`（行规范化，parse 与 confirm 共用）、`recomputeColumnStats` |
-| `lib/quality.ts` | `generateDataQuality`：质量报告（含 INVALID_DATE / INVALID_NUMBER / MIXED_TYPE），parse 与 confirm 共用 |
+|---|---|
+| `lib/parse.ts` | CSV/Excel 解析、物理类型候选、原始/存储行数 |
+| `lib/normalize.ts` | 数值、日期、布尔标准化；确认后按最终物理配置重规范化 |
+| `lib/quality.ts` | 质量报告、截断、混合类型、非法日期/数值等警告 |
+| `lib/semantic/build-data-context.ts` | 客观上下文、可复现采样、统计和 token budget |
+| `lib/semantic/detect-sensitive.ts` | 敏感字段识别与同上下文稳定掩码 |
+| `lib/semantic/understand-dataset.ts` | LLM 数据理解、Schema 修复循环与失败状态 |
+| `lib/semantic/apply-understanding.ts` | 用户字段修正、歧义处理和确认；用户修正标记 `source=user` |
 
-### 4.2 存储层
+物理类型与业务语义严格分离。例如数字型订单号可以同时是 `ColumnMeta.type=number` 与 `FieldUnderstanding.role=identifier`。
 
-| 模块 | 职责 |
-|------|------|
-| `lib/store.ts` | 文件型存储，原子写入（`saveJsonAtomic`），三文件拆分（meta / rows / analyses），旧数据自动迁移 |
-| `lib/schemas/dataset.ts` | Dataset ID（UUID）、ColumnMeta、FieldConfig、DataQualityReport 的 Zod 校验 |
-
-### 4.3 确定性分析引擎（`lib/analysis/`）
-
-所有数值计算在此完成，LLM 不得介入。
-
-| 子模块 | 职责 |
-|--------|------|
-| `aggregation.ts` | `resolveAggregation`（用户设置→格式→类型默认）+ `isAllowedAgg` 拦截非法组合 + `aggregate` 计算（SPEC 8 单一入口） |
-| `statistics.ts` | 基础统计：count/sum/avg/min/max/median/P25/P75/std/零值/负值 |
-| `profile.ts` | 字段画像：角色识别、去重数、空值率、低基数判定 |
-| `trends.ts` | 时间趋势：粒度选择（日/周/月）、首末期变化、变化率（分母为 0 保护） |
-| `comparisons.ts` | 分组对比：按主维度聚合、Top10、agg 选择（percentage=avg, currency=sum） |
-| `outliers.ts` | IQR 异常值：Q1-1.5×IQR / Q3+1.5×IQR，样本<8 跳过，最多 5 个样本 |
-| `evidence.ts` | 证据构造：7 种 method 的 AnalysisEvidence 预构造器 |
-| `recommend-charts.ts` | 图表推荐 + 8 条语义校验 + pie 降级 + TopN + 局部容错 + 排序 |
-| `index.ts` | `runLocalAnalysis` 总入口，组装 evidence + ComputedInsight |
-
-### 4.4 LLM 改造层
+### 4.2 计划层
 
 | 模块 | 职责 |
-|------|------|
-| `lib/llm-config.ts` | `getActiveLLMConfig`：settings→env→默认 单一入口，`enabled` 以最终 apiKey 计算（SPEC 6） |
-| `lib/llm-prompt.ts` | `SYSTEM_PROMPT`（7 条约束）+ `buildLLMInput`（7 区块不含原始数据）+ `LLMInterpretationSchema` |
-| `lib/llm.ts` | `chatJSON`（30s 超时）+ `streamChat`（60s 超时）+ think 标签过滤，统一走 `getActiveLLMConfig` |
-| `lib/analyzer.ts` | 编排：本地先算 → `onStructured` → LLM 仅解读 → `renamedChartTitles` → 分段 narrative → `onFinal` → 失败回退 local |
+|---|---|
+| `lib/planner/planning-prompt.ts` | 只允许注册操作符、已有字段和结构化任务 |
+| `lib/planner/create-analysis-plan.ts` | LLM Plan + 最多两次修复 |
+| `lib/planner/validate-analysis-plan.ts` | ID、字段、依赖、聚合、语义、公式、图表和上限校验 |
+| `lib/planner/plan-dependencies.ts` | 环检测和拓扑排序 |
 
-**provider 语义**（v0.2.1 统一）：
-- `local`：纯本地计算，无 LLM。
-- `local+llm`：本地计算 + LLM 解读成功。
-- 旧缓存的 `mock / llm` 在读取时自动迁移为上述两值。
+非法计划不会进入执行器。计划默认最多 16 个任务，硬上限 24 个。
 
-### 4.5 图表层
+### 4.3 确定性执行层
+
+所有任务必须通过 `lib/executor/registry.ts` 分派。操作符位于 `lib/executor/operators/`：
+
+`profile / aggregate / timeseries / compare / distribution / ranking / ratio / growth / correlation / anomaly / pivot`
+
+关键模块：
 
 | 模块 | 职责 |
-|------|------|
-| `lib/chart.ts` | `buildChartOption`：ChartSpec + rows → ECharts option，支持 TopN 截断（bar/pie）、主题色读取 |
-| `lib/schemas/chart.ts` | `ChartSpecSchema`（agg 必填）+ `validateChartSpec` + `filterValidCharts` |
+|---|---|
+| `formula-engine.ts` | 深度/节点受限的 Formula AST；显式除零策略 |
+| `execute-plan.ts` | DAG 分层并发、依赖失败跳过、增量复用和任务隔离 |
+| `task-cache.ts` | 进程内 LRU，键包含 rows/understanding/task/executor 哈希 |
+| `result-hash.ts` | canonical task、输入与结果 SHA-256 |
+| `compile-chart.ts` | 从 DashboardItemPlan + TaskExecutionResult 编译图表/表格/KPI |
 
----
+执行器复用 `lib/analysis/*` 的聚合、统计、趋势和异常逻辑，不维护第二套同义计算。
 
-## 5. 关键约束
+### 4.4 终审与对话
 
-- **不发原始数据给 LLM**：`buildLLMInput` 只发结构化摘要、字段定义、evidence、图表列表，不含原始行。
-- **LLM 不得修改计算**：只能改 `renamedChartTitles`，不能改 xField/yField/agg/数值。
-- **evidence 强制引用**：每条 `ComputedInsight` 必须引用有效 `evidenceId`。
-- **原子写入**：所有持久化经 `saveJsonAtomic`（写临时文件 → rename）。
-- **Dataset ID 校验**：所有入口用 `isValidDatasetId`（UUID）统一校验。
-- **超时回退**：LLM 任何步骤失败都保留本地结果，看板始终可用。
+| 模块 | 职责 |
+|---|---|
+| `lib/reviewer/review-execution.ts` | 终审 LLM 调用、Schema 与引用校验 |
+| `lib/reviewer/validate-review.ts` | 拒绝编造 Evidence；校验任务和图表引用 |
+| `lib/reviewer/apply-review-patch.ts` | 不可变地应用终审 Patch |
+| `lib/conversation/interpret-user-feedback.ts` | 自然语言 → AnalysisPlanPatch，最多两次修复 |
+| `lib/conversation/apply-plan-patch.ts` | 校验 Patch 目标并合并计划/语义 |
+| `lib/conversation/impact-analysis.ts` | 区分展示复用、单任务重算和下游依赖链 |
+| `lib/conversation/revision-history.ts` | Revision 摘要、撤销/恢复（恢复创建新版本） |
 
----
+### 4.5 编排门面
 
-## 6. 测试与 CI
+- `lib/analyzer.ts` 是兼容门面：LLM 未启用、理解未确认或编排失败时进入 `rule_fallback`；否则调用 Session 编排。
+- `lib/orchestrator/run-analysis-session.ts` 负责首次 Plan → Execute → Review → Finalize。
+- `lib/orchestrator/apply-user-feedback.ts` 负责反馈 Patch → 增量 Execute → Review → 激活新 Revision。
 
-- 测试框架：Vitest 1.6，`@` 别名，DATA_DIR 隔离。
-- 测试覆盖：parse / normalize / field-config / store / analysis / chart-engine / analyzer / chart / heartbeat，以及 v0.2.1 新增的 llm-config / reconfigure-normalization / aggregation-flow / sse-final / type-sampling / dataset-state / migration-recovery（共 17 文件 288 用例）。
-- CI：`.github/workflows/ci.yml` 执行 `typecheck` + `test` + `build`（等价 `npm run check`）。
-- 测试 `fileParallelism=false`：共享临时 DATA_DIR，串行避免文件系统竞态。
-- 每阶段改造后必须三件套全绿。
+`provider` 保持 `local | local+llm` 以兼容旧 UI；`analysisMode` 区分 `rule_fallback | llm_orchestrated`。
+
+## 5. 存储、一致性与迁移
+
+```text
+.data/datasets/{uuid}/
+  meta.json
+  rows.json
+  analyses.json
+  context.json
+  understanding.json
+  sessions/{sessionId}/
+    session.json
+    revisions/{revisionId}.json
+```
+
+- `saveJsonAtomic` 对同一路径串行写入，临时文件写完后 fsync、关闭并 rename。
+- Dataset ID 必须为 UUID；Session/Revision ID 还要通过安全字符校验，禁止路径穿越。
+- 激活顺序是“先写 Revision，最后写 Session.activeRevisionId”，避免悬空引用。
+- 每个数据集最多 5 个 Session，每个 Session 最多 20 个 Revision。
+- v0.2 单文件数据会通过 `.migrating` 临时目录迁移；旧 analysis 保留，不会在读取时自动调用 LLM。
+
+## 6. API 与 SSE
+
+非流式 API 使用 `ok` / `fail` 与统一错误信封。SSE 路由自行写帧，但错误后不会继续发送伪成功 `final/done`。
+
+| API | 用途 |
+|---|---|
+| `POST /api/datasets/{id}/understand` | 构建上下文并运行理解（SSE） |
+| `GET|PUT /api/datasets/{id}/understanding` | 读取、修正、确认理解 |
+| `POST /api/analyze` | 首次分析（SSE） |
+| `GET /api/analysis/{sessionId}` | Session、active Revision、历史摘要 |
+| `POST /api/analysis/{sessionId}/feedback` | 自然语言微调（SSE） |
+| `GET /api/analysis/{sessionId}/revisions/{revisionId}` | Revision 详情 |
+| `POST /api/analysis/{sessionId}/revisions/{revisionId}/restore` | 创建恢复 Revision |
+
+编排事件：`stage / understanding / ambiguity / plan / task_started / task_completed / task_failed / review / question / revision / token / final / done / error`。旧 `result` 事件继续兼容本地规则模式。
+
+## 7. 安全边界
+
+- 禁止 `eval`、`new Function`、任意脚本、任意 SQL、文件/网络工具调用。
+- 单元格、字段名和 Sheet 名均视为不可信数据；Understanding Prompt 明确执行提示注入隔离。
+- 默认向 LLM 发送统计和最多 40 条脱敏样本，不发送完整原始表。
+- 终审输入是任务摘要、裁剪后的聚合结果、Evidence、图表草案和 warning。
+- API Key 不进入日志、响应、Evidence、Session 或 Revision。
+- 用户反馈最长 4000 字符；失败 Patch 不写理解、不保存 Revision、不切 activeRevisionId。
+- 相关性不得描述为因果，统计异常不得直接断言为业务错误，数据截断必须贯穿全链路。
+
+## 8. 测试与质量门
+
+- Vitest 在临时 `DATA_DIR` 中串行运行，避免文件竞态和仓库污染。
+- 测试覆盖解析、质量、DataContext、脱敏、提示注入、Understanding、Plan、公式、11 类工具、Review、Session/Revision、反馈影响、恢复和 Route/SSE 顺序。
+- CI 与本地最终质量门均为：
+
+```bash
+npm run check
+```
+
+它依次执行 strict TypeScript、完整 Vitest 和 Next.js production build。项目没有 ESLint 配置，`typecheck` 是静态质量门。
+
+## 9. 本地生命周期
+
+当 `AUTO_SHUTDOWN_ENABLED=true` 时，`AutoShutdown` 每 30 秒发送 heartbeat；所有浏览器 Session 关闭并超过 45 秒宽限期后进程退出。开发调试应保持为 `false`，避免切页时误停服务。

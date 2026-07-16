@@ -30,7 +30,7 @@ export function applyFieldUnderstandingChanges(
   const byField = new Map(changes.map((c) => [c.field, c.changes]));
   const fields = understanding.fields.map((f) => {
     const ch = byField.get(f.field);
-    return ch ? { ...f, ...ch } : f;
+    return ch ? { ...f, ...ch, field: f.field, source: "user" as const } : f;
   });
   return { ...understanding, fields };
 }

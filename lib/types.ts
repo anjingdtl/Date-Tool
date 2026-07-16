@@ -196,7 +196,16 @@ export interface StoredDataset extends Dataset {
   analyses?: AnalysisResult[];
 }
 
-export type ChartType = "bar" | "line" | "pie" | "table";
+export type ChartType =
+  | "bar"
+  | "line"
+  | "pie"
+  | "table"
+  | "area"
+  | "stacked_bar"
+  | "scatter"
+  | "heatmap"
+  | "kpi";
 
 export interface ChartSpec {
   id: string;
@@ -211,6 +220,10 @@ export interface ChartSpec {
   evidenceId?: string;
   /** v0.2 新增：Top N 限制 */
   limit?: number;
+  /** v0.3 编译后的表格行；只含确定性任务输出，不是原始全量数据。 */
+  dataRows?: DatasetRow[];
+  /** v0.3 KPI 卡片值。 */
+  scalar?: number | string | null;
 }
 
 export type EChartsOption = Record<string, unknown>;
@@ -233,14 +246,6 @@ export interface AnalysisResult {
   warnings?: string[];
   /** v0.2 新增：分析引擎版本 */
   version?: string;
-}
-
-/** LLM 解读输出（v0.2 新增） */
-export interface LLMInterpretation {
-  summary: string;
-  narrative: string;
-  actions: string[];
-  renamedChartTitles?: Record<string, string>;
 }
 
 /** 数据集公开投影（不含原始行，用于列表/详情摘要） */
@@ -444,6 +449,8 @@ export interface FieldUnderstanding {
   naturalOrder?: string[];
   confidence: number;
   reason: string;
+  /** 语义事实来源；用户修正拥有最高优先级。 */
+  source?: "llm" | "user" | "fallback";
 }
 
 /** 字段间关系（SPEC 10.2） */

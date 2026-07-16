@@ -1064,6 +1064,59 @@ table.data tr:hover td {
   flex-wrap: wrap;
 }
 
+/* v0.3 Agent 编排 / 对话 / Revision */
+.agent-panel h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.agent-help {
+  margin: 8px 0 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.agent-timeline {
+  margin: 14px 0 0;
+  padding-left: 22px;
+  color: var(--text-dim);
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.agent-task-list,
+.revision-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+.agent-task-list > div,
+.revision-item {
+  padding: 10px 12px;
+  border: 1px solid var(--glass-rim);
+  border-radius: 12px;
+  background: var(--glass-1);
+}
+.kpi-value {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: clamp(42px, 8vw, 72px);
+  font-weight: 700;
+  color: var(--accent);
+}
+.agent-textarea {
+  min-height: 110px;
+  resize: vertical;
+  font-family: var(--font);
+  line-height: 1.6;
+}
+.revision-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 /* ============================================================
    滚动条
    ============================================================ */

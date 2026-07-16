@@ -26,6 +26,9 @@ export interface ExecutePlanHooks {
 
 export interface ExecutePlanOptions extends ExecutePlanHooks {
   maxConcurrency?: number;
+  /** 增量执行：不在 taskIdsToExecute 中的任务优先复用上一 Revision 结果。 */
+  taskIdsToExecute?: Set<string>;
+  reuseResults?: Record<string, TaskExecutionResult>;
 }
 
 function skippedResult(task: AnalysisTask, reason: string): TaskExecutionResult {
@@ -67,7 +70,22 @@ export async function executePlan(
   }
 
   const hitsBefore = getCacheHits();
-  const pending = new Set(order);
+  const requested = options.taskIdsToExecute
+    ? new Set(options.taskIdsToExecute)
+    : new Set(order);
+  for (const id of order) {
+    if (requested.has(id)) continue;
+    const reused = options.reuseResults?.[id];
+    if (!reused) {
+      requested.add(id);
+      continue;
+    }
+    results[id] = reused;
+    if (reused.status === "success" || reused.status === "partial") done.add(id);
+    else failed.add(id);
+  }
+  context.priorResults = { ...context.priorResults, ...results };
+  const pending = new Set(order.filter((id) => requested.has(id)));
 
   while (pending.size > 0) {
     const ready = [...pending].filter((id) => {
@@ -100,6 +118,18 @@ export async function executePlan(
         else options.onTaskCompleted?.(t, r);
       }),
     );
+    // 依赖任务在下一批执行时可读取已经完成的上游结果。
+    context.priorResults = { ...context.priorResults, ...results };
+  }
+
+  // 理论上计划已通过 DAG 校验；若仍因未知依赖等原因无法推进，明确标为 skipped，
+  // 避免返回缺少 task result 的不完整执行对象。
+  for (const id of pending) {
+    const t = taskMap.get(id)!;
+    const r = skippedResult(t, "任务依赖无法满足");
+    results[id] = r;
+    failed.add(id);
+    options.onTaskFailed?.(t, r);
   }
 
   const cacheHits = getCacheHits() - hitsBefore;

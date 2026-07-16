@@ -4,9 +4,8 @@
  * 从 DashboardItemPlan + TaskExecutionResult 编译图表（SPEC 20.4）。
  *
  * - 不让 LLM 直接生成 ECharts option，统一由本地编译；
- * - PlannedChartType 映射到基础 ChartType（bar/line/pie/table）经 buildChartOption，
- *   再按原类型增强（area→areaStyle、stacked_bar→stack）；
- * - kpi 返回 scalar 卡片信息；scatter/heatmap 记录 originalType 供前端增强。
+ * - area/stacked_bar 复用基础坐标图后增强；scatter/heatmap 本地编译专用 option；
+ * - table 携带受控任务结果行，kpi 携带 scalar，前端不再误用原始预览行；
  * - 旧 bar/line/pie/table 完全可读。
  */
 import type {
@@ -44,7 +43,7 @@ function pickAxisColumns(
   return { x, y };
 }
 
-function mapToBaseType(t: PlannedChartType): ChartSpec["type"] {
+function mapToBaseType(t: PlannedChartType): "bar" | "line" | "pie" | "table" {
   switch (t) {
     case "line":
     case "area":
@@ -90,11 +89,21 @@ export function compileChart(
       spec: {
         id: item.id,
         title: item.title,
-        type: "table",
+        type: "kpi",
         xField: task.dimensions[0] ?? "",
         yField: y ?? "",
+        scalar,
       },
-      option: {},
+      option: {
+        graphic: [
+          {
+            type: "text",
+            left: "center",
+            top: "middle",
+            style: { text: scalar === null ? "—" : String(scalar), fontSize: 42, fontWeight: 700 },
+          },
+        ],
+      },
       scalar,
       evidenceId: result.evidence[0]?.id,
     };
@@ -103,18 +112,80 @@ export function compileChart(
   const { x, y } = pickAxisColumns(task, result);
   if (!x || !y) return null;
 
+  if (item.type === "table") {
+    return {
+      itemId: item.id,
+      taskId: task.id,
+      title: item.title,
+      originalType: item.type,
+      visible: item.visible,
+      width: item.width,
+      spec: {
+        id: item.id,
+        title: item.title,
+        type: "table",
+        xField: x,
+        yField: y,
+        description: item.description,
+        evidenceId: result.evidence[0]?.id,
+        dataRows: result.rows,
+      },
+      option: {},
+      evidenceId: result.evidence[0]?.id,
+    };
+  }
+
   const spec: ChartSpec = {
     id: item.id,
     title: item.title,
-    type: mapToBaseType(item.type),
+    type: item.type,
     xField: x,
     yField: y,
     agg: "sum",
     description: item.description,
     evidenceId: result.evidence[0]?.id,
     limit: task.limit,
+    dataRows: result.rows,
   };
-  const option = buildChartOption(spec, result.rows);
+  let option: EChartsOption;
+  if (item.type === "scatter") {
+    const numeric = result.columns.filter((column) => column.type === "number");
+    const xMetric = numeric[0]?.name ?? x;
+    const yMetric = numeric[1]?.name ?? y;
+    option = {
+      tooltip: { trigger: "item" },
+      xAxis: { type: "value", name: xMetric },
+      yAxis: { type: "value", name: yMetric },
+      series: [{
+        type: "scatter",
+        data: result.rows
+          .map((row) => [row[xMetric], row[yMetric]])
+          .filter((pair) => pair.every((value) => typeof value === "number")),
+      }],
+    };
+  } else if (item.type === "heatmap" && task.dimensions.length >= 2) {
+    const xField = task.dimensions[0];
+    const yField = task.dimensions[1];
+    const valueField = task.metrics[0] ?? y;
+    const xs = [...new Set(result.rows.map((row) => String(row[xField] ?? "")))];
+    const ys = [...new Set(result.rows.map((row) => String(row[yField] ?? "")))];
+    const data = result.rows.map((row) => [
+      xs.indexOf(String(row[xField] ?? "")),
+      ys.indexOf(String(row[yField] ?? "")),
+      typeof row[valueField] === "number" ? row[valueField] : 0,
+    ]);
+    const max = Math.max(0, ...data.map((point) => Number(point[2]) || 0));
+    option = {
+      tooltip: { position: "top" },
+      xAxis: { type: "category", data: xs },
+      yAxis: { type: "category", data: ys },
+      visualMap: { min: 0, max, calculable: true, orient: "horizontal", left: "center", bottom: 0 },
+      series: [{ type: "heatmap", data, label: { show: true } }],
+    };
+  } else {
+    const baseSpec = { ...spec, type: mapToBaseType(item.type) };
+    option = buildChartOption(baseSpec, result.rows);
+  }
 
   // 按原类型增强
   const series = option.series as Array<Record<string, unknown>> | undefined;
@@ -145,6 +216,9 @@ export function compileDashboard(
   const charts: CompiledChart[] = [];
   const issues: string[] = [];
   const taskMap = new Map(plan.tasks.map((t) => [t.id, t]));
+  const itemPriority = new Map(
+    plan.dashboard.items.map((item) => [item.id, item.priority]),
+  );
   for (const item of plan.dashboard.items) {
     if (!item.visible) continue;
     const task = taskMap.get(item.taskId);
@@ -155,8 +229,7 @@ export function compileDashboard(
   }
   charts.sort(
     (a, b) =>
-      (taskMap.get(a.taskId)?.priority ?? 0) -
-      (taskMap.get(b.taskId)?.priority ?? 0),
+      (itemPriority.get(a.itemId) ?? 0) - (itemPriority.get(b.itemId) ?? 0),
   );
   return { charts, issues };
 }

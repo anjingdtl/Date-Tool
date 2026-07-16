@@ -9,7 +9,17 @@ import { z } from "zod";
 export const ChartSpecSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1).max(120),
-  type: z.enum(["bar", "line", "pie", "table"]),
+  type: z.enum([
+    "bar",
+    "line",
+    "pie",
+    "table",
+    "area",
+    "stacked_bar",
+    "scatter",
+    "heatmap",
+    "kpi",
+  ]),
   xField: z.string().min(1),
   yField: z.string().min(1),
   groupBy: z.string().optional(),
