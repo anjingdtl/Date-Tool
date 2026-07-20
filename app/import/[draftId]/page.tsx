@@ -373,6 +373,19 @@ export default function ImportPreviewPage() {
 
   async function confirmAndGo() {
     if (!data) return;
+    // 若已触发 AI 理解但未确认（且未明确选本地模式），先 inline 确认，
+    // 用户同意后以本地模式继续，避免硬禁用导致流程堵塞。
+    const needsLocalConfirm =
+      !!understanding &&
+      understanding.status !== "confirmed" &&
+      !useLocalFallback;
+    if (needsLocalConfirm) {
+      const ok = window.confirm(
+        "AI 数据理解尚未确认。点击「确定」将以本地规则模式生成看板（不调用 LLM，洞察基于规则），或返回上方完成 AI 理解后再生成。",
+      );
+      if (!ok) return;
+      setUseLocalFallback(true);
+    }
     setConfirming(true);
     setBanner(null);
     try {
@@ -417,9 +430,15 @@ export default function ImportPreviewPage() {
 
       const result = await confirmDataset(draftId, updateBody);
       setBanner({ type: "ok", msg: "已确认，正在跳转到看板…" });
+      // 本地模式 / 未确认理解：跳转后让 dashboard 自动以 forceLocal 启动分析，
+      // 省掉用户再手动点「运行分析」的步骤。
+      const shouldAutostart = useLocalFallback || needsLocalConfirm;
+      const redirectUrl = shouldAutostart
+        ? `${result.redirectTo}?autostart=1&forceLocal=1`
+        : result.redirectTo;
       // 给用户一瞬反馈再跳
       setTimeout(() => {
-        router.push(result.redirectTo);
+        router.push(redirectUrl);
       }, 300);
     } catch (e) {
       const err = e as Error & { details?: FieldConfigIssue[] };
@@ -801,10 +820,14 @@ export default function ImportPreviewPage() {
               disabled={
                 confirming ||
                 saving ||
-                data.status === "ready" ||
-                (!!understanding &&
-                  understanding.status !== "confirmed" &&
-                  !useLocalFallback)
+                data.status === "ready"
+              }
+              title={
+                !!understanding &&
+                understanding.status !== "confirmed" &&
+                !useLocalFallback
+                  ? "AI 理解未确认，点击将以本地规则模式继续"
+                  : "校验字段配置并生成看板"
               }
             >
               {confirming ? "校验中…" : "✨ 生成看板"}

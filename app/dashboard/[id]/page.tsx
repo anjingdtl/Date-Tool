@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import ChartCard from "@/components/ChartCard";
 import InsightPanel from "@/components/InsightPanel";
 import AnalysisTimeline from "@/components/AnalysisTimeline";
@@ -32,6 +32,10 @@ import type {
 export default function DashboardPage() {
   const params = useParams();
   const id = String(params.id);
+  const searchParams = useSearchParams();
+  const autostartRequested = searchParams?.get("autostart") === "1";
+  const forceLocalRequested = searchParams?.get("forceLocal") === "1";
+  const autostartFiredRef = useRef(false);
 
   const [detail, setDetail] = useState<DatasetDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -244,6 +248,16 @@ export default function DashboardPage() {
       setStage("");
     }
   }, [id, loadSession]);
+
+  // import 页带 autostart=1 跳转过来时自动启动分析，省掉用户再点一次「运行分析」。
+  // 只在 detail 就绪、状态允许分析、且未触发过时执行一次。
+  useEffect(() => {
+    if (!autostartRequested || autostartFiredRef.current) return;
+    if (!detail || streaming) return;
+    if (detail.status !== "ready" && detail.status !== "completed") return;
+    autostartFiredRef.current = true;
+    void startAnalysis(forceLocalRequested);
+  }, [autostartRequested, detail, streaming, forceLocalRequested, startAnalysis]);
 
   const sendFeedback = useCallback(async (message: string) => {
     if (!sessionId || !revisionId) return;
