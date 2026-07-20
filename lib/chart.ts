@@ -2,26 +2,26 @@ import type { ChartSpec, DatasetRow, EChartsOption } from "./types";
 import { aggregate } from "./analysis/aggregation";
 
 const PALETTE = [
-  "#6c8cff",
-  "#45e0c8",
-  "#ff7eb6",
-  "#ffcf5c",
-  "#9b8cff",
-  "#5cc8ff",
-  "#ff9f6c",
-  "#7ee787",
+  "#34c759", // apple green
+  "#007aff", // apple blue
+  "#ff9500", // apple orange
+  "#5856d6", // apple indigo
+  "#af52de", // apple pink/purple
+  "#5ac8fa", // apple cyan
+  "#ff2d55", // apple pink-red
+  "#ffd60a", // apple yellow
 ];
 
 /** 主题相关色 —— 运行时从 :root 读 CSS 变量，让图表跟随主题变 */
 function themeColors() {
-  const fallback = { axis: "#26304d", text: "#9aa6c2", labelBg: "rgba(15, 42, 41, 0.72)" };
+  const fallback = { axis: "rgba(60, 60, 67, 0.12)", text: "#6e6e73", labelBg: "rgba(255, 255, 255, 0.72)" };
   if (typeof document === "undefined") return fallback;
   const cs = getComputedStyle(document.documentElement);
   const axis = cs.getPropertyValue("--chart-axis").trim() || fallback.axis;
   const text = cs.getPropertyValue("--chart-text").trim() || fallback.text;
-  // labelBg：默认从 --bg 派生 70% 透明
-  const bg = cs.getPropertyValue("--bg").trim() || "#1f4a48";
-  const labelBg = `color-mix(in srgb, ${bg} 70%, transparent)`;
+  // labelBg：默认从 --bg 派生 72% 透明（苹果风卡片背景上的数值药丸）
+  const bg = cs.getPropertyValue("--bg").trim() || "#ffffff";
+  const labelBg = `color-mix(in srgb, ${bg} 72%, transparent)`;
   return { axis, text, labelBg };
 }
 

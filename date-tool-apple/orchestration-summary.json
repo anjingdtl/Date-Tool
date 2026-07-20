@@ -1,0 +1,144 @@
+{
+  "skillProvenance": {
+    "name": "solo-design",
+    "version": "2026.07",
+    "version_source": "skill-version.json",
+    "runtime_skill_dir": "c:\\Users\\Administrator\\.trae-cn\\builtin\\design\\default\\skills\\solo-design",
+    "recorded_at": "2026-07-20T00:00:00Z"
+  },
+  "project": {
+    "name": "Date-Tool · 苹果风格界面",
+    "path": "d:\\Claudeworkspace\\Date-Tool\\date-tool-apple",
+    "operation": "create",
+    "deviceType": "desktop",
+    "language": "zh-CN",
+    "dashboardMode": true,
+    "intentProfile": {
+      "caseFamily": "library_bound",
+      "graphicStrategy": null,
+      "sourceType": null,
+      "routingReason": "用户选定苹果设计系统作为风格约束，把 Date-Tool 项目 UI 做成苹果风格（UI 重设计 + 新建设计项目）"
+    },
+    "replicationMode": null,
+    "sourceUrl": null,
+    "designRead": "企业数据看板 / 数据分析师 / 克制精确的苹果 HIG 风格 / 信息密集但留白克制 / 避免花哨渐变与彩色阴影",
+    "designDials": { "layoutVariance": 3, "motionIntensity": 2, "visualDensity": 3 },
+    "styleContinuityAnchors": null,
+    "sharedProjectShellContract": {
+      "navigationShell": "统一 Apple 风顶栏：白底 + 1px --border 下边框 + 轻微 backdrop-blur；左侧品牌标记（单色几何 logo + 应用名「数据仪表」DM Sans 600）；右侧上下文操作按钮（药丸形 per Apple button spec）。",
+      "primaryColorSystem": "单一品牌色 Pinguo Blue #007aff（--primary），仅用于主 CTA / 选中态 / 链接；状态色仅 success/warning/error 语义；其余以中性 background/text 层级表达。",
+      "typographySystem": "DM Sans 全局字体；标题 600 负字距；正文 400 14-16px / 1.55；数字/技术细节用 JetBrains Mono（--font-mono）。",
+      "radiusScale": "按钮全药丸形（rounded-full）；输入/小标签用 --radius-sm (0.5rem)；卡片用 --radius-md (0.75rem) 或 --radius-lg (1.2rem)。",
+      "surfaceDepthModel": "卡片优先 1px 边框定义边缘，静态阴影 alpha ≤ 0.06（--shadow-xs/--shadow-sm）；仅悬浮/拖拽/浮层用更深的 --shadow-lg/--shadow-xl。",
+      "ctaStyle": "主 CTA 药丸形 bg-primary text-primary-foreground；次 CTA 药丸形 border border-border text-foreground bg-background；图标 CTA 圆形/药丸带 Lucide 图标。",
+      "alignmentRules": "12 列内容网格，最大宽度 1200px 居中；section 间距 48-64px；卡片内部 padding 24-32px；左对齐为主。"
+    }
+  },
+  "designSource": {
+    "operatingMode": "library-bound",
+    "libraryIdentity": {
+      "name": "苹果",
+      "id": "dl_builtin_apple",
+      "version": null,
+      "scope": "built-in-global",
+      "path": "c:\\Users\\Administrator\\.trae-cn\\design_libraries\\dl_builtin_apple",
+      "versionSource": "metadata.json"
+    },
+    "libraryPath": "c:\\Users\\Administrator\\.trae-cn\\design_libraries\\dl_builtin_apple",
+    "cssFilePath": "d:\\Claudeworkspace\\Date-Tool\\date-tool-apple\\colors_and_type.css",
+    "brandPrefix": "(prefixless — 语义 token 无前缀)",
+    "themeMode": "light",
+    "designDecisionSummary": "Apple HIG 克制风：Pinguo Blue #007aff 单一品牌色 + 中性黑白灰层级；DM Sans 字体；药丸按钮；1.2rem 大圆角卡片；极轻阴影；大量留白；线形 Lucide 图标。",
+    "componentContractKind": "compact-json",
+    "forbiddenInventedComponents": [],
+    "allowedComponents": ["button", "card", "input", "navigation", "comparison-table"],
+    "styleConstraints": {
+      "radiusMax": 19.2,
+      "spacingBase": 3.84,
+      "fontSizeBody": 15,
+      "fontSizeMin": 12,
+      "controlHeightDefault": 40,
+      "controlHeightLarge": 48
+    },
+    "productContext": { "kitType": "app", "productType": "企业本地数据分析 Agent（Date-Tool / wecom-ops-dashboard）" },
+    "actualTokenNameReference": [
+      { "semanticPurpose": "页面/卡片背景", "tokenName": "background" },
+      { "semanticPurpose": "次级背景（section 分组）", "tokenName": "accent" },
+      { "semanticPurpose": "深色顶栏/侧栏背景", "tokenName": "background-900" },
+      { "semanticPurpose": "正文文字", "tokenName": "foreground" },
+      { "semanticPurpose": "次要文字", "tokenName": "muted-foreground" },
+      { "semanticPurpose": "品牌主色（CTA/链接/选中）", "tokenName": "primary" },
+      { "semanticPurpose": "主色上的文字", "tokenName": "primary-foreground" },
+      { "semanticPurpose": "卡片表面", "tokenName": "card" },
+      { "semanticPurpose": "边框/分隔线", "tokenName": "border" },
+      { "semanticPurpose": "输入框边框", "tokenName": "input" },
+      { "semanticPurpose": "聚焦环", "tokenName": "ring" },
+      { "semanticPurpose": "成功状态", "tokenName": "success" },
+      { "semanticPurpose": "警告状态", "tokenName": "warning" },
+      { "semanticPurpose": "危险/错误/删除", "tokenName": "destructive" },
+      { "semanticPurpose": "图表色 1-5", "tokenName": "chart-1" },
+      { "semanticPurpose": "小圆角（输入/标签）", "tokenName": "radius-sm" },
+      { "semanticPurpose": "中圆角（卡片）", "tokenName": "radius-md" },
+      { "semanticPurpose": "大圆角（大卡片/容器）", "tokenName": "radius-lg" },
+      { "semanticPurpose": "卡片静态阴影", "tokenName": "shadow-sm" },
+      { "semanticPurpose": "悬浮阴影", "tokenName": "shadow-md" },
+      { "semanticPurpose": "字体", "tokenName": "font-sans" },
+      { "semanticPurpose": "等宽字体（数字/代码）", "tokenName": "font-mono" }
+    ]
+  },
+  "pages": [
+    {
+      "nodeId": "page-home", "slug": "home", "title": "首页", "htmlSrc": "pages/home.html", "pageIndex": 1,
+      "pageType": "task-driven", "viewportMode": "document-scroll",
+      "businessScenario": "数据导入入口：拖拽上传 Excel/CSV + 已有数据集列表",
+      "visualNorthStar": "克制留白的产品首页：左侧大字标题建立定位，右侧/下方上传拖拽区与数据集卡片用苹果式大圆角与极轻阴影呈现。",
+      "compositionPattern": "信息-操作双栏 + 纵向节奏卡片列表",
+      "continuityAnchors": ["Apple 风白底顶栏", "药丸形主 CTA", "1px 边框卡片", "DM Sans 标题负字距"],
+      "componentPlan": ["button", "card", "navigation"],
+      "imagePlan": [], "chartsRequired": false
+    },
+    {
+      "nodeId": "page-import", "slug": "import", "title": "数据预检", "htmlSrc": "pages/import.html", "pageIndex": 2,
+      "pageType": "information-dense", "viewportMode": "document-scroll",
+      "businessScenario": "上传后预检：文件摘要 + 数据质量 + AI 数据理解 + 字段配置 + 前 20 行预览 + 生成看板",
+      "visualNorthStar": "信息密集但呼吸感强的配置工作台：纵向分组卡片，每组用小写 section 标题 + 克制留白分隔，字段表与预览表用极细分隔线。",
+      "compositionPattern": "纵向分组卡片流（summary → quality → AI understanding → field config → preview → generate）",
+      "continuityAnchors": ["Apple 风白底顶栏", "药丸形主 CTA", "1px 边框卡片", "极细表格分隔线"],
+      "componentPlan": ["button", "card", "input", "comparison-table"],
+      "imagePlan": [], "chartsRequired": false
+    },
+    {
+      "nodeId": "page-dashboard", "slug": "dashboard", "title": "数据看板", "htmlSrc": "pages/dashboard.html", "pageIndex": 3,
+      "pageType": "information-dense", "viewportMode": "document-scroll",
+      "businessScenario": "分析结果看板：洞察摘要 + 多张图表 + 分析模式徽标 + 终审面板 + 自然语言微调对话 + 版本历史",
+      "visualNorthStar": "数据驱动的分析看板：顶部洞察大卡片 + 下方图表网格（每张图卡用苹果式圆角与极轻阴影），右侧对话/历史栏。",
+      "compositionPattern": "顶部洞察带 + 图表网格 + 双栏对话/历史",
+      "continuityAnchors": ["Apple 风顶栏带数据集名与操作", "图表用 chart-1..5 token", "药丸形主 CTA", "1px 边框卡片"],
+      "componentPlan": ["button", "card", "navigation", "comparison-table"],
+      "imagePlan": [], "chartsRequired": true
+    },
+    {
+      "nodeId": "page-settings", "slug": "settings", "title": "设置", "htmlSrc": "pages/settings.html", "pageIndex": 4,
+      "pageType": "task-driven", "viewportMode": "document-scroll",
+      "businessScenario": "系统设置：苹果风单主题 + LLM 配置表单（服务商/Base URL/API Key/模型名）+ 测试连接 + 数据隐私开关",
+      "visualNorthStar": "macOS 系统偏好设置式的设置页：分组卡片 + 表单字段左标签右控件对齐 + 底部操作按钮药丸形。",
+      "compositionPattern": "纵向分组卡片（主题 → LLM 配置 → 隐私管理）",
+      "continuityAnchors": ["Apple 风白底顶栏", "表单字段左标签右控件", "药丸形主 CTA", "1px 边框卡片"],
+      "componentPlan": ["button", "card", "input", "navigation"],
+      "imagePlan": [], "chartsRequired": false
+    }
+  ],
+  "wiringPlan": [
+    { "sourceNodeId": "page-home", "domId": "cta-upload", "targetPageId": "page-import", "transitionLabel": "上传后进入预检" },
+    { "sourceNodeId": "page-home", "domId": "open-dashboard", "targetPageId": "page-dashboard", "transitionLabel": "打开看板" },
+    { "sourceNodeId": "page-home", "domId": "nav-settings", "targetPageId": "page-settings", "transitionLabel": "设置" },
+    { "sourceNodeId": "page-import", "domId": "cta-generate", "targetPageId": "page-dashboard", "transitionLabel": "生成看板" },
+    { "sourceNodeId": "page-dashboard", "domId": "nav-settings", "targetPageId": "page-settings", "transitionLabel": "设置" }
+  ],
+  "hiddenInteractionPlan": [
+    { "sourceNodeId": "page-import", "domId": "back-home", "targetPageId": "page-home", "hideEdge": true, "reason": "返回首页" },
+    { "sourceNodeId": "page-dashboard", "domId": "back-home", "targetPageId": "page-home", "hideEdge": true, "reason": "返回首页" },
+    { "sourceNodeId": "page-settings", "domId": "back-home", "targetPageId": "page-home", "hideEdge": true, "reason": "返回首页" },
+    { "sourceNodeId": "page-dashboard", "domId": "re-understand", "targetPageId": "page-import", "hideEdge": true, "reason": "重新理解数据" }
+  ]
+}

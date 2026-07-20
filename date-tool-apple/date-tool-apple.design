@@ -1,0 +1,252 @@
+{
+  "data": [
+    {
+      "id": "page-home",
+      "title": "首页 · 浅色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1784532329000,
+      "canvasData": {
+        "x": 0,
+        "y": 0,
+        "group": 0
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/home.html",
+        "interactions": [
+          {
+            "domId": "cta-upload",
+            "targetPageId": "page-import",
+            "transitionLabel": "上传后进入预检"
+          },
+          {
+            "domId": "open-dashboard",
+            "targetPageId": "page-dashboard",
+            "transitionLabel": "打开看板"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "transitionLabel": "设置"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-import",
+      "title": "数据预检 · 浅色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1784532329000,
+      "canvasData": {
+        "x": 620,
+        "y": 0,
+        "group": 0
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/import.html",
+        "interactions": [
+          {
+            "domId": "cta-generate",
+            "targetPageId": "page-dashboard",
+            "transitionLabel": "生成看板"
+          },
+          {
+            "domId": "back-home",
+            "targetPageId": "page-home",
+            "hideEdge": true,
+            "transitionLabel": "返回首页"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-dashboard",
+      "title": "数据看板 · 浅色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1784532329000,
+      "canvasData": {
+        "x": 1240,
+        "y": 0,
+        "group": 0
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/dashboard.html",
+        "interactions": [
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings",
+            "transitionLabel": "设置"
+          },
+          {
+            "domId": "back-home",
+            "targetPageId": "page-home",
+            "hideEdge": true,
+            "transitionLabel": "返回首页"
+          },
+          {
+            "domId": "re-understand",
+            "targetPageId": "page-import",
+            "hideEdge": true,
+            "transitionLabel": "重新理解数据"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-settings",
+      "title": "设置 · 浅色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1784532329000,
+      "canvasData": {
+        "x": 1860,
+        "y": 0,
+        "group": 0
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/settings.html",
+        "interactions": [
+          {
+            "domId": "back-home",
+            "targetPageId": "page-home",
+            "hideEdge": true,
+            "transitionLabel": "返回首页"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-home-dark",
+      "title": "首页 · 深色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1784533935000,
+      "canvasData": {
+        "x": 0,
+        "y": 696,
+        "group": 1
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/home-dark.html",
+        "interactions": [
+          {
+            "domId": "cta-upload",
+            "targetPageId": "page-import-dark",
+            "transitionLabel": "上传后进入预检"
+          },
+          {
+            "domId": "open-dashboard",
+            "targetPageId": "page-dashboard-dark",
+            "transitionLabel": "打开看板"
+          },
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "transitionLabel": "设置"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-import-dark",
+      "title": "数据预检 · 深色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1784533935000,
+      "canvasData": {
+        "x": 620,
+        "y": 696,
+        "group": 1
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/import-dark.html",
+        "interactions": [
+          {
+            "domId": "cta-generate",
+            "targetPageId": "page-dashboard-dark",
+            "transitionLabel": "生成看板"
+          },
+          {
+            "domId": "back-home",
+            "targetPageId": "page-home-dark",
+            "hideEdge": true,
+            "transitionLabel": "返回首页"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-dashboard-dark",
+      "title": "数据看板 · 深色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1784533935000,
+      "canvasData": {
+        "x": 1240,
+        "y": 696,
+        "group": 1
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/dashboard-dark.html",
+        "interactions": [
+          {
+            "domId": "nav-settings",
+            "targetPageId": "page-settings-dark",
+            "transitionLabel": "设置"
+          },
+          {
+            "domId": "back-home",
+            "targetPageId": "page-home-dark",
+            "hideEdge": true,
+            "transitionLabel": "返回首页"
+          },
+          {
+            "domId": "re-understand",
+            "targetPageId": "page-import-dark",
+            "hideEdge": true,
+            "transitionLabel": "重新理解数据"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-settings-dark",
+      "title": "设置 · 深色",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1784533935000,
+      "canvasData": {
+        "x": 1860,
+        "y": 696,
+        "group": 1
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/settings-dark.html",
+        "interactions": [
+          {
+            "domId": "back-home",
+            "targetPageId": "page-home-dark",
+            "hideEdge": true,
+            "transitionLabel": "返回首页"
+          }
+        ]
+      }
+    }
+  ],
+  "config": {
+    "autoLayout": true,
+    "deviceType": "desktop",
+    "projectName": "Date-Tool · 苹果风格界面（浅色 + 深色）",
+    "designLibrary": {
+      "name": "苹果",
+      "id": "dl_builtin_apple",
+      "version": null,
+      "scope": "built-in-global",
+      "path": "c:\\Users\\Administrator\\.trae-cn\\design_libraries\\dl_builtin_apple",
+      "versionSource": "metadata.json"
+    },
+    "visualEditorEnabled": false
+  }
+}

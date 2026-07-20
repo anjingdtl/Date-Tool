@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const ThemeSchema = z.enum(["verdigris", "ocean", "sunset", "ink"]);
+export const ThemeSchema = z.enum(["light", "dark"]);
 
 /** API 协议常量：前端发该值表示保留旧 API Key（SPEC 14.4），不得与真实 Key 混淆 */
 export const KEEP_API_KEY_TOKEN = "__KEEP__";

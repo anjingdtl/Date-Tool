@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 /** 主题预设 id —— 与 globals.css 中 :root[data-theme="xxx"] 一一对应 */
-export const THEMES = ["verdigris", "ocean", "sunset", "ink"] as const;
+export const THEMES = ["light", "dark"] as const;
 export type ThemeId = (typeof THEMES)[number];
 
 export interface LLMSettings {
@@ -24,7 +24,7 @@ export interface AppSettings {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  theme: "verdigris",
+  theme: "light",
   llm: {
     provider: "MiniMax",
     baseUrl: "",
@@ -72,6 +72,17 @@ export async function readSettings(): Promise<AppSettings> {
     const raw = await fs.readFile(fp, "utf-8");
     const parsed = JSON.parse(raw);
     const merged = deepMerge(DEFAULT_SETTINGS, parsed);
+    // 主题迁移：旧版本（verdigris/ocean/sunset/ink）平滑映射到苹果双主题
+    const legacyThemes = ["verdigris", "ocean", "sunset", "ink"] as const;
+    const themeRaw = merged.theme as unknown as string;
+    if (
+      typeof themeRaw === "string" &&
+      (legacyThemes as readonly string[]).includes(themeRaw)
+    ) {
+      // ink（极简黑白）映射到 dark，其余三套深色主题映射到 light
+      merged.theme = themeRaw === "ink" ? "dark" : "light";
+    }
+    if (!THEMES.includes(merged.theme)) merged.theme = "light";
     // apiKey 为空 → 走 env 回退；并据此刷新 enabled 标记
     const envBase =
       process.env.OPENAI_BASE_URL || process.env.LLM_BASE_URL || "";

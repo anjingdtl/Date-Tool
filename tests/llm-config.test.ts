@@ -126,7 +126,7 @@ describe("getActiveLLMConfig - SPEC 6.6", () => {
     await fs.writeFile(
       settingsPath(),
       JSON.stringify({
-        theme: "verdigris",
+        theme: "light",
         llm: {
           provider: "MiniMax",
           baseUrl: "",

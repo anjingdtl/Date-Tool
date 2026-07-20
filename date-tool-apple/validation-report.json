@@ -1,0 +1,25 @@
+{
+  "success": true,
+  "skillProvenance": {
+    "name": "solo-design",
+    "version": "2026.07",
+    "version_source": "skill-version.json",
+    "runtime_skill_dir": "c:\\Users\\Administrator\\.trae-cn\\builtin\\design\\default\\skills\\solo-design",
+    "recorded_at": "2026-07-20T00:00:00Z",
+    "read_status": "ok"
+  },
+  "operatingMode": "library-bound",
+  "renderBlockingErrorCount": 0,
+  "softWarningCount": 0,
+  "renderBlockingErrors": [],
+  "softWarnings": [],
+  "repairPlanHints": [],
+  "errorCount": 0,
+  "warningCount": 0,
+  "errors": [],
+  "warnings": [],
+  "designDir": "d:\\Claudeworkspace\\Date-Tool\\date-tool-apple",
+  "expectedPages": 8,
+  "requireInteractions": "cta-upload:home-dark.html,open-dashboard:home-dark.html,nav-settings:home-dark.html,cta-generate:import-dark.html,back-home:import-dark.html,nav-settings:dashboard-dark.html,back-home:dashboard-dark.html,re-understand:dashboard-dark.html,back-home:settings-dark.html",
+  "checkedAt": "2026-07-20T07:53:38.688Z"
+}

@@ -12,7 +12,7 @@ interface LLMSettings {
 }
 
 interface SettingsResponse {
-  theme: "verdigris" | "ocean" | "sunset" | "ink";
+  theme: "light" | "dark";
   llm: LLMSettings;
   privacy: { sendRowSamples: boolean };
   _hasRealKey: boolean;
@@ -25,28 +25,16 @@ const THEME_OPTIONS: {
   swatch: { bg: string; accent: string };
 }[] = [
   {
-    id: "verdigris",
-    name: "Verdigris",
-    hint: "深青墨绿 · 古铜金（默认）",
-    swatch: { bg: "#1f4a48", accent: "#c9a87c" },
+    id: "light",
+    name: "浅色",
+    hint: "Apple Blue · 纯白底 · DM Sans（默认）",
+    swatch: { bg: "#ffffff", accent: "#007aff" },
   },
   {
-    id: "ocean",
-    name: "Ocean",
-    hint: "深海军蓝 · 天青蓝（科技感）",
-    swatch: { bg: "#0a2540", accent: "#4f9eff" },
-  },
-  {
-    id: "sunset",
-    name: "Sunset",
-    hint: "深紫红 · 落日金（温暖）",
-    swatch: { bg: "#4a1f23", accent: "#ffae5c" },
-  },
-  {
-    id: "ink",
-    name: "Ink",
-    hint: "深炭灰 · 银白（极简黑白）",
-    swatch: { bg: "#15171c", accent: "#c7d0e0" },
+    id: "dark",
+    name: "深色",
+    hint: "OLED 纯黑 · 深灰卡片 · 提亮品牌色",
+    swatch: { bg: "#000000", accent: "#2e8dff" },
   },
 ];
 
@@ -58,7 +46,7 @@ export default function SettingsPage() {
   const [error, setError] = useState("");
 
   // 表单本地状态（API Key 单独处理 —— 后端用 "__KEEP__" 表示保留旧值）
-  const [theme, setTheme] = useState<SettingsResponse["theme"]>("verdigris");
+  const [theme, setTheme] = useState<SettingsResponse["theme"]>("light");
   const [provider, setProvider] = useState("MiniMax");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState(""); // 用户输入；保存时若空 → "__KEEP__" 或清空
