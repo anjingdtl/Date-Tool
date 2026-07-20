@@ -38,15 +38,39 @@ async function parse<T>(res: Response): Promise<T> {
 export async function uploadDataset(
   file: File,
   name?: string,
+  options?: { onProgress?: (loaded: number, total: number) => void },
 ): Promise<UploadResult> {
   const fd = new FormData();
   fd.append("file", file);
   if (name) fd.append("name", name);
-  const res = await fetch(`${BASE}/api/datasets`, {
-    method: "POST",
-    body: fd,
+
+  // 用 XHR 而非 fetch：fetch 在浏览器侧目前没有可靠的 upload progress API。
+  const xhr = new XMLHttpRequest();
+  const url = `${BASE}/api/datasets`;
+  return new Promise<UploadResult>((resolve, reject) => {
+    xhr.open("POST", url);
+    xhr.responseType = "json";
+    if (options?.onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) options.onProgress!(e.loaded, e.total);
+      };
+    }
+    xhr.onerror = () => reject(new Error("上传失败：网络错误"));
+    xhr.onload = () => {
+      const status = xhr.status;
+      if (status < 200 || status >= 300) {
+        const j = xhr.response as { detail?: string } | null;
+        reject(new Error(j?.detail ?? `上传失败 (${status})`));
+        return;
+      }
+      try {
+        resolve(xhr.response as UploadResult);
+      } catch {
+        reject(new Error("上传响应解析失败"));
+      }
+    };
+    xhr.send(fd);
   });
-  return parse<UploadResult>(res);
 }
 
 export async function listDatasets(): Promise<PublicDataset[]> {
