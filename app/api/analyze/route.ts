@@ -105,13 +105,29 @@ export async function POST(req: NextRequest) {
   await setDatasetStatus(datasetId, "analyzing");
   logger.info("analysis_started", { requestId, datasetId });
 
+  // 客户端断开时让状态机可重试，而不是卡在 analyzing。
+  let aborted = false;
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: string, data: unknown) => {
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
+        if (aborted) return;
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+        } catch {
+          /* controller 已关闭，忽略 */
+        }
       };
+      // 心跳：防止反代/浏览器在长 LLM 调用期间因 60s 无字节而断流。
+      const heartbeat = setInterval(() => {
+        if (aborted) return;
+        try {
+          controller.enqueue(encoder.encode(`: ping\n\n`));
+        } catch {
+          /* controller 已关闭，忽略 */
+        }
+      }, 15000);
 
       try {
         const result = await analyzeDataset(
@@ -160,6 +176,11 @@ export async function POST(req: NextRequest) {
           { userGoal: body.userGoal, forceLocal: body.forceLocal },
         );
 
+        if (aborted) {
+          // 客户端已断开：仍把结果写盘，但不再发事件。
+          await updateAnalysis(datasetId, result);
+          return;
+        }
         await updateAnalysis(datasetId, result); // 内部将 analyzing → completed
         send("done", { provider: result.provider, createdAt: result.createdAt });
         logger.info("analysis_completed", {
@@ -169,14 +190,26 @@ export async function POST(req: NextRequest) {
           charts: result.charts.length,
         });
       } catch (err) {
+        if (aborted) {
+          // 客户端已断开：把状态回滚到 ready，让用户能重试。
+          await setDatasetStatus(datasetId, "ready").catch(() => {});
+          logger.info("analysis_aborted", { requestId, datasetId });
+          return;
+        }
         // 本地分析失败 → error（SPEC 12.3）；LLM 失败已在 analyzer 内回退，不会到此
         await setDatasetStatus(datasetId, "error");
         const message = err instanceof Error ? err.message : "分析失败";
         logger.error("analysis_failed", { requestId, datasetId, message });
         send("error", { message });
       } finally {
-        controller.close();
+        clearInterval(heartbeat);
+        try { controller.close(); } catch { /* 已关闭 */ }
       }
+    },
+    cancel() {
+      // 客户端关闭了 SSE 连接（页面卸载、AbortController 触发等）。
+      aborted = true;
+      logger.info("analysis_stream_cancelled", { requestId, datasetId });
     },
   });
 

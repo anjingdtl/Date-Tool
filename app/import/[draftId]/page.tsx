@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import FieldConfigTable, {
   type EditableField,
 } from "@/components/FieldConfigTable";
@@ -97,6 +97,11 @@ export default function ImportPreviewPage() {
   const [understandingMsg, setUnderstandingMsg] = useState("");
   const [pendingChanges, setPendingChanges] = useState<FieldUnderstandingChange[]>([]);
   const [useLocalFallback, setUseLocalFallback] = useState(false);
+  /** 理解 SSE 中断控制：重新理解时 abort 旧流；卸载时也 abort。 */
+  const understandAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => understandAbortRef.current?.abort();
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -160,6 +165,9 @@ export default function ImportPreviewPage() {
   /* —— v0.3：AI 数据理解（SPEC 20.1） —— */
 
   async function startUnderstand(force = false) {
+    understandAbortRef.current?.abort();
+    const ac = new AbortController();
+    understandAbortRef.current = ac;
     setUnderstandingPhase("loading");
     setUnderstandingMsg("正在理解数据…");
     setPendingChanges([]);
@@ -186,7 +194,7 @@ export default function ImportPreviewPage() {
           setUnderstandingMsg(m);
         },
       },
-      { force },
+      { force, signal: ac.signal },
     );
   }
 

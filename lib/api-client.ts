@@ -211,7 +211,7 @@ export interface AnalyzeHooks {
 export async function runAnalysis(
   datasetId: string,
   hooks: AnalyzeHooks,
-  options?: { userGoal?: string; forceLocal?: boolean },
+  options?: { userGoal?: string; forceLocal?: boolean; signal?: AbortSignal },
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/analyze`, {
     method: "POST",
@@ -221,8 +221,13 @@ export async function runAnalysis(
       userGoal: options?.userGoal,
       forceLocal: options?.forceLocal,
     }),
+    signal: options?.signal,
+  }).catch((err: unknown) => {
+    if (err instanceof Error && err.name === "AbortError") return null;
+    throw err;
   });
 
+  if (!res) return; // 被取消，不调 onError
   if (!res.ok || !res.body) {
     let msg = `分析请求失败 (${res.status})`;
     try {
@@ -293,23 +298,33 @@ export async function runAnalysis(
     curData = "";
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (line.startsWith("event:")) {
-        curEvent = line.slice(6).trim();
-      } else if (line.startsWith("data:")) {
-        curData = line.slice(5).trim();
-      } else if (line.trim() === "") {
-        dispatch();
+  const onAbort = () => {
+    try { reader.cancel(); } catch { /* ignore */ }
+  };
+  options?.signal?.addEventListener("abort", onAbort);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          curEvent = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          curData = line.slice(5).trim();
+        } else if (line.trim() === "") {
+          dispatch();
+        }
       }
     }
+    dispatch();
+  } catch {
+    /* reader 被取消或读取失败：静默退出，不调 onError */
+  } finally {
+    options?.signal?.removeEventListener("abort", onAbort);
   }
-  dispatch();
 }
 
 /* ----------------------- v0.3：AI 数据理解 API（SPEC 18.1） ----------------------- */
@@ -383,7 +398,7 @@ export interface UnderstandSSEHooks {
 export async function runUnderstand(
   datasetId: string,
   hooks: UnderstandSSEHooks,
-  options?: { userDescription?: string; force?: boolean },
+  options?: { userDescription?: string; force?: boolean; signal?: AbortSignal },
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/datasets/${datasetId}/understand`, {
     method: "POST",
@@ -392,8 +407,13 @@ export async function runUnderstand(
       userDescription: options?.userDescription,
       force: options?.force,
     }),
+    signal: options?.signal,
+  }).catch((err: unknown) => {
+    if (err instanceof Error && err.name === "AbortError") return null;
+    throw err;
   });
 
+  if (!res) return; // 被取消
   if (!res.ok || !res.body) {
     let msg = `理解请求失败 (${res.status})`;
     try {
@@ -440,23 +460,33 @@ export async function runUnderstand(
     curData = "";
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (line.startsWith("event:")) {
-        curEvent = line.slice(6).trim();
-      } else if (line.startsWith("data:")) {
-        curData = line.slice(5).trim();
-      } else if (line.trim() === "") {
-        dispatch();
+  const onAbort = () => {
+    try { reader.cancel(); } catch { /* ignore */ }
+  };
+  options?.signal?.addEventListener("abort", onAbort);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          curEvent = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          curData = line.slice(5).trim();
+        } else if (line.trim() === "") {
+          dispatch();
+        }
       }
     }
+    dispatch();
+  } catch {
+    /* reader 被取消：静默退出 */
+  } finally {
+    options?.signal?.removeEventListener("abort", onAbort);
   }
-  dispatch();
 }
 
 /* ----------------------- v0.3：Session / Feedback / Revision ----------------------- */
@@ -528,12 +558,18 @@ export async function runAnalysisFeedback(
   revisionId: string,
   message: string,
   hooks: FeedbackHooks,
+  options?: { signal?: AbortSignal },
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/analysis/${sessionId}/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ revisionId, message }),
+    signal: options?.signal,
+  }).catch((err: unknown) => {
+    if (err instanceof Error && err.name === "AbortError") return null;
+    throw err;
   });
+  if (!res) return; // 被取消
   if (!res.ok || !res.body) {
     let error = `修改请求失败 (${res.status})`;
     try {
@@ -575,17 +611,27 @@ export async function runAnalysisFeedback(
     event = "";
     data = "";
   };
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (line.startsWith("event:")) event = line.slice(6).trim();
-      else if (line.startsWith("data:")) data = line.slice(5).trim();
-      else if (!line.trim()) dispatch();
+  const onAbort = () => {
+    try { reader.cancel(); } catch { /* ignore */ }
+  };
+  options?.signal?.addEventListener("abort", onAbort);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data = line.slice(5).trim();
+        else if (!line.trim()) dispatch();
+      }
     }
+    dispatch();
+  } catch {
+    /* reader 被取消：静默退出 */
+  } finally {
+    options?.signal?.removeEventListener("abort", onAbort);
   }
-  dispatch();
 }

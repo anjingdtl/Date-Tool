@@ -73,7 +73,7 @@ export async function POST(
             }
             send("done", { status: existing.status });
           } finally {
-            controller.close();
+            try { controller.close(); } catch { /* 已关闭 */ }
           }
         },
       });
@@ -87,13 +87,28 @@ export async function POST(
     }
   }
 
+  let aborted = false;
   const stream = new ReadableStream({
     async start(controller) {
       const enc = new TextEncoder();
-      const send = (event: string, data: unknown) =>
-        controller.enqueue(
-          enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
+      const send = (event: string, data: unknown) => {
+        if (aborted) return;
+        try {
+          controller.enqueue(
+            enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+        } catch {
+          /* controller 已关闭，忽略 */
+        }
+      };
+      const heartbeat = setInterval(() => {
+        if (aborted) return;
+        try {
+          controller.enqueue(enc.encode(`: ping\n\n`));
+        } catch {
+          /* controller 已关闭，忽略 */
+        }
+      }, 15000);
       try {
         send("stage", { stage: "正在构建数据上下文" });
         send("stage", { stage: "AI 正在理解数据" });
@@ -105,6 +120,7 @@ export async function POST(
         });
         // DataContext 在 LLM 关闭或理解失败时也必须保留，便于重试与审计。
         await saveContext(id, result.context);
+        if (aborted) return;
         if (result.understanding) {
           await saveUnderstanding(id, result.understanding);
           if (result.status === "needs_user_input") {
@@ -120,6 +136,10 @@ export async function POST(
           send("error", { message: result.error ?? "数据理解失败" });
         }
       } catch (err) {
+        if (aborted) {
+          logger.info("understanding_stream_cancelled", { requestId, datasetId: id });
+          return;
+        }
         const message = err instanceof Error ? err.message : "数据理解失败";
         logger.error("understanding_route_failed", {
           requestId,
@@ -128,8 +148,13 @@ export async function POST(
         });
         send("error", { message });
       } finally {
-        controller.close();
+        clearInterval(heartbeat);
+        try { controller.close(); } catch { /* 已关闭 */ }
       }
+    },
+    cancel() {
+      aborted = true;
+      logger.info("understanding_stream_cancelled", { requestId, datasetId: id });
     },
   });
 

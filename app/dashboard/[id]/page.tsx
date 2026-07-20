@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import ChartCard from "@/components/ChartCard";
 import InsightPanel from "@/components/InsightPanel";
@@ -67,6 +67,17 @@ export default function DashboardPage() {
   const [revisions, setRevisions] = useState<RevisionListItem[]>([]);
   const [feedbackBusy, setFeedbackBusy] = useState(false);
   const [objectives, setObjectives] = useState<string[]>([]);
+  /** SSE 中断控制：分析/反馈/理解各持一个 controller，新调用先 abort 旧流。 */
+  const analyzeAbortRef = useRef<AbortController | null>(null);
+  const feedbackAbortRef = useRef<AbortController | null>(null);
+
+  /** 组件卸载时中断所有 SSE 流，避免后台脏 setState。 */
+  useEffect(() => {
+    return () => {
+      analyzeAbortRef.current?.abort();
+      feedbackAbortRef.current?.abort();
+    };
+  }, []);
 
   const applyResult = useCallback((result: AnalysisResult) => {
     setSummary(result.summary);
@@ -132,6 +143,10 @@ export default function DashboardPage() {
   }, [load]);
 
   const startAnalysis = useCallback(async (forceLocal = false) => {
+    // 中断上一次未完成的分析 SSE，避免新旧流同时 setState。
+    analyzeAbortRef.current?.abort();
+    const ac = new AbortController();
+    analyzeAbortRef.current = ac;
     setStreaming(true);
     setRunError("");
     setSummary("");
@@ -219,10 +234,12 @@ export default function DashboardPage() {
           if (completedSessionId) void loadSession(completedSessionId);
         },
         onError: (m) => setRunError(m),
-      }, { forceLocal });
+      }, { forceLocal, signal: ac.signal });
     } catch (e) {
+      if (ac.signal.aborted) return; // 主动取消，不报错
       setRunError(e instanceof Error ? e.message : "分析失败");
     } finally {
+      if (analyzeAbortRef.current === ac) analyzeAbortRef.current = null;
       setStreaming(false);
       setStage("");
     }
@@ -230,6 +247,10 @@ export default function DashboardPage() {
 
   const sendFeedback = useCallback(async (message: string) => {
     if (!sessionId || !revisionId) return;
+    // 中断上一次未完成的反馈 SSE。
+    feedbackAbortRef.current?.abort();
+    const ac = new AbortController();
+    feedbackAbortRef.current = ac;
     setFeedbackBusy(true);
     setRunError("");
     setTimeline([]);
@@ -272,8 +293,12 @@ export default function DashboardPage() {
           void loadSession(sessionId);
         },
         onError: (messageText) => setRunError(messageText),
-      });
+      }, { signal: ac.signal });
+    } catch (e) {
+      if (ac.signal.aborted) return; // 主动取消，不报错
+      setRunError(e instanceof Error ? e.message : "修改失败");
     } finally {
+      if (feedbackAbortRef.current === ac) feedbackAbortRef.current = null;
       setFeedbackBusy(false);
       setStage("");
     }

@@ -49,13 +49,27 @@ export async function POST(
   }
 
   const encoder = new TextEncoder();
+  let aborted = false;
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: string, data: unknown) => {
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
+        if (aborted) return;
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+        } catch {
+          /* controller 已关闭，忽略 */
+        }
       };
+      const heartbeat = setInterval(() => {
+        if (aborted) return;
+        try {
+          controller.enqueue(encoder.encode(`: ping\n\n`));
+        } catch {
+          /* controller 已关闭，忽略 */
+        }
+      }, 15000);
       try {
         logger.info("feedback_received", {
           requestId,
@@ -108,6 +122,11 @@ export async function POST(
             onFinal: (finalResult) => send("final", finalResult),
           },
         });
+        if (aborted) {
+          // 客户端已断开：仍把结果写盘。
+          await updateAnalysis(located!.datasetId, result.finalResult);
+          return;
+        }
         await updateAnalysis(located!.datasetId, result.finalResult);
         send("done", {
           provider: result.finalResult.provider,
@@ -116,6 +135,10 @@ export async function POST(
           impact: result.impact,
         });
       } catch (err) {
+        if (aborted) {
+          logger.info("feedback_stream_cancelled", { requestId, sessionId });
+          return;
+        }
         const message = err instanceof Error ? err.message : "修改失败";
         logger.warn("feedback_patch_rejected", {
           requestId,
@@ -124,8 +147,13 @@ export async function POST(
         });
         send("error", { message });
       } finally {
-        controller.close();
+        clearInterval(heartbeat);
+        try { controller.close(); } catch { /* 已关闭 */ }
       }
+    },
+    cancel() {
+      aborted = true;
+      logger.info("feedback_stream_cancelled", { requestId, sessionId });
     },
   });
   return new Response(stream, {
