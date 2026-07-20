@@ -74,6 +74,8 @@ export interface Dataset {
   storedRowCount?: number;
   /** 选中工作表名，v0.2 新增 */
   sheetName?: string;
+  /** Excel 文件中所有可用工作表名（仅 Excel 来源）；用于 UI 提示用户切换需重新上传。 */
+  availableSheets?: string[];
   columns: ColumnMeta[];
   createdAt: string;
 }

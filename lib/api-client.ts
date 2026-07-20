@@ -101,6 +101,7 @@ export interface PreviewDetail {
   originalRowCount?: number;
   storedRowCount?: number;
   sheetName?: string;
+  availableSheets?: string[];
   columns: DatasetDetail["columns"];
   createdAt: string;
   status?: DatasetDetail["status"];
@@ -316,7 +317,9 @@ export async function runAnalysis(
           break;
       }
     } catch {
-      /* 忽略坏帧 */
+      // 坏帧不再静默吞：让 UI 至少能看到事件名。
+      // 注意：此处 onError 触发后流程仍会继续（done 事件可能仍能正确解析）。
+      hooks.onError?.(`收到无法解析的事件：${curEvent || "(unknown)"}`);
     }
     curEvent = "";
     curData = "";
@@ -478,7 +481,7 @@ export async function runUnderstand(
           break;
       }
     } catch {
-      /* 忽略坏帧 */
+      hooks.onError?.(`收到无法解析的事件：${curEvent || "(unknown)"}`);
     }
     curEvent = "";
     curData = "";
@@ -629,8 +632,9 @@ export async function runAnalysisFeedback(
         case "done": hooks.onDone?.(payload); break;
         case "error": hooks.onError?.(payload.message ?? "修改失败"); break;
       }
-    } catch {
-      /* 忽略坏帧 */
+    } catch (e) {
+      // 坏帧不再静默吞：让 UI 至少能看到事件名，便于排查 LLM 损坏 final payload 的场景。
+      hooks.onError?.(`收到无法解析的事件：${event || "(unknown)"}`);
     }
     event = "";
     data = "";

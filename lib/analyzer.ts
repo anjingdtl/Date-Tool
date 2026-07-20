@@ -50,10 +50,10 @@ function localNarrative(ds: StoredDataset, insights: ComputedInsight[]): string 
   const top = insights.slice(0, 3);
   const parts = top.map((i) => `· ${i.title}: ${i.statement}`);
   return [
-    `你好,世恒哥～ 我把《${ds.name}》通读了一遍:共 ${ds.rowCount} 行、${ds.columns.length} 列。`,
-    `本地引擎算完了所有关键数值,挑 3 条最值得看的信号给你:`,
+    `已为你完成《${ds.name}》的分析：共 ${ds.rowCount} 行、${ds.columns.length} 列。`,
+    `本地引擎已算完所有关键数值，以下 3 条是最值得关注的信号：`,
     ...parts,
-    `想深挖哪个字段,告诉我字段名,我直接去数据里翻个底朝天。`,
+    `如需深挖某个字段，告诉我字段名即可继续下钻。`,
   ].join("\n\n");
 }
 
@@ -106,6 +106,13 @@ export interface AnalyzeHooks {
 
 /** 本地兜底 final 载荷 */
 function emitFinal(hooks: AnalyzeHooks, r: AnalysisResult): void {
+  // 防御性去重：避免 warnings 中出现重复条目（如 LLM 自己列了两条相同的截断提示）。
+  const seen = new Set<string>();
+  const dedupedWarnings = (r.warnings ?? []).filter((w) => {
+    if (seen.has(w)) return false;
+    seen.add(w);
+    return true;
+  });
   hooks.onFinal?.({
     summary: r.summary,
     insights: r.insights,
@@ -116,7 +123,7 @@ function emitFinal(hooks: AnalyzeHooks, r: AnalysisResult): void {
     createdAt: r.createdAt,
     evidence: r.evidence,
     computedInsights: r.computedInsights,
-    warnings: r.warnings,
+    warnings: dedupedWarnings,
   });
 }
 

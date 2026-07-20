@@ -66,6 +66,7 @@ interface DatasetMeta {
   originalRowCount?: number;
   storedRowCount?: number;
   sheetName?: string;
+  availableSheets?: string[];
   columns: StoredDataset["columns"];
   createdAt: string;
   status?: DatasetStatus;
@@ -83,6 +84,7 @@ function toMeta(ds: StoredDataset): DatasetMeta {
     originalRowCount: ds.originalRowCount,
     storedRowCount: ds.storedRowCount,
     sheetName: ds.sheetName,
+    availableSheets: ds.availableSheets,
     columns: ds.columns,
     createdAt: ds.createdAt,
     status: ds.status,
@@ -101,6 +103,7 @@ function toPublic(meta: DatasetMeta, hasAnalysis: boolean): PublicDataset {
     originalRowCount: meta.originalRowCount,
     storedRowCount: meta.storedRowCount,
     sheetName: meta.sheetName,
+    availableSheets: meta.availableSheets,
     columns: meta.columns,
     createdAt: meta.createdAt,
     status: meta.status,
@@ -125,6 +128,24 @@ function normalizeAnalysis(a: AnalysisResult | null): AnalysisResult | null {
 /** 从已读取的 StoredDataset 直接构造公开投影（SPEC 16，避免重复读盘） */
 export function toPublicDataset(ds: StoredDataset): PublicDataset {
   return toPublic(toMeta(ds), !!ds.analysis);
+}
+
+/**
+ * Feedback 并发锁：进程内按 sessionId 标记"正在处理"。
+ * 防止双标签页或快速双击绕过客户端 feedbackBusy 禁用，
+ * 导致同一 Session 上同时跑两份 Revision。
+ *
+ * 返回 true 表示成功占用，调用方结束后必须 releaseFeedbackLock；
+ * 返回 false 表示已有进行中的修改，调用方应直接 409。
+ */
+const activeFeedbackSessions = new Set<string>();
+export function acquireFeedbackLock(sessionId: string): boolean {
+  if (activeFeedbackSessions.has(sessionId)) return false;
+  activeFeedbackSessions.add(sessionId);
+  return true;
+}
+export function releaseFeedbackLock(sessionId: string): void {
+  activeFeedbackSessions.delete(sessionId);
 }
 
 /**

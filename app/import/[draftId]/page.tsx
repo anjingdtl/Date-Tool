@@ -538,6 +538,15 @@ export default function ImportPreviewPage() {
               <p className="fc-summary-label">工作表</p>
               <div className="fc-summary-value" style={{ fontSize: 14 }}>
                 {data.sheetName}
+                {data.availableSheets && data.availableSheets.length > 1 && (
+                  <span
+                    className="muted"
+                    style={{ marginLeft: 6, fontSize: 12 }}
+                    title="如需切换到其它 Sheet，请返回首页重新上传文件"
+                  >
+                    （共 {data.availableSheets.length} 个 Sheet，如需切换请重新上传）
+                  </span>
+                )}
               </div>
             </div>
           )}

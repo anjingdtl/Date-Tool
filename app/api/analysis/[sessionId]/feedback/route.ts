@@ -1,7 +1,14 @@
 import { NextRequest } from "next/server";
 import { applyUserFeedback } from "@/lib/orchestrator/apply-user-feedback";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
-import { findSession, getDataset, getRevision, updateAnalysis } from "@/lib/store";
+import {
+  acquireFeedbackLock,
+  findSession,
+  getDataset,
+  getRevision,
+  releaseFeedbackLock,
+  updateAnalysis,
+} from "@/lib/store";
 import { fail, newRequestId } from "@/lib/respond";
 import { logger } from "@/lib/logger";
 
@@ -44,6 +51,10 @@ export async function POST(
     if (!dataset) throw new NotFoundError("数据集不存在");
     baseRevision = await getRevision(located.datasetId, sessionId, body.revisionId);
     if (!baseRevision) throw new NotFoundError("当前 Revision 不存在");
+    // 服务端并发锁：双标签页或快速双击会绕过客户端禁用，这里再守一道。
+    if (!acquireFeedbackLock(sessionId)) {
+      throw new ConflictError("正在处理上一条修改，请稍后再试");
+    }
   } catch (err) {
     return fail(err, requestId);
   }
@@ -148,6 +159,7 @@ export async function POST(
         send("error", { message });
       } finally {
         clearInterval(heartbeat);
+        releaseFeedbackLock(sessionId);
         try { controller.close(); } catch { /* 已关闭 */ }
       }
     },

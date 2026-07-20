@@ -267,8 +267,9 @@ export default function DashboardPage() {
     feedbackAbortRef.current = ac;
     setFeedbackBusy(true);
     setRunError("");
-    setTimeline([]);
-    setTasks([]);
+    // 不清空 timeline/tasks：上次成功的证据应该保留可见，
+    // 新的事件会追加在末尾。失败时不会丢失上下文。
+    setTimeline((prev) => [...prev, "──── 用户反馈 ────"]);
     try {
       await runAnalysisFeedback(sessionId, revisionId, message, {
         onStage: (value) => {
@@ -318,9 +319,12 @@ export default function DashboardPage() {
     }
   }, [applyResult, loadSession, revisionId, sessionId]);
 
+  const [restoring, setRestoring] = useState(false);
   const restoreRevision = useCallback(async (targetRevisionId: string) => {
     if (!sessionId) return;
-    setFeedbackBusy(true);
+    // restore 是读盘操作，用独立 state 而非 feedbackBusy——
+    // 否则会把 AnalysisChat 一起禁用，用户无法继续提问。
+    setRestoring(true);
     setRunError("");
     try {
       const restored = await restoreAnalysisRevision(sessionId, targetRevisionId);
@@ -329,7 +333,7 @@ export default function DashboardPage() {
     } catch (e) {
       setRunError(e instanceof Error ? e.message : "恢复 Revision 失败");
     } finally {
-      setFeedbackBusy(false);
+      setRestoring(false);
     }
   }, [applyResult, loadSession, sessionId]);
 
@@ -478,7 +482,7 @@ export default function DashboardPage() {
               <AnalysisChat disabled={feedbackBusy || streaming} onSend={sendFeedback} />
               <RevisionHistory
                 revisions={revisions}
-                busy={feedbackBusy || streaming}
+                busy={feedbackBusy || streaming || restoring}
                 onRestore={restoreRevision}
               />
             </div>

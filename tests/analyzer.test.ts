@@ -198,7 +198,8 @@ describe("analyzeDataset 门面 - 本地降级（SPEC 14.1 / 4.2）", () => {
     const result = await analyzeDataset(makeDataset(), "req-5", {
       onNarrativeToken: () => {},
     });
-    expect(result.narrative).toContain("通读");
+    expect(result.narrative).toContain("已为你完成");
+    expect(result.narrative).toContain("本地引擎已算完所有关键数值");
   });
 
   it("本地降级结果含 evidence/computedInsights/warnings", async () => {

@@ -6,12 +6,14 @@ vi.mock("@/lib/store", () => ({
   getDataset: vi.fn(),
   getRevision: vi.fn(),
   updateAnalysis: vi.fn(async () => {}),
+  acquireFeedbackLock: vi.fn(() => true),
+  releaseFeedbackLock: vi.fn(),
 }));
 vi.mock("@/lib/orchestrator/apply-user-feedback", () => ({ applyUserFeedback: vi.fn() }));
 
 import { POST } from "@/app/api/analysis/[sessionId]/feedback/route";
 import { applyUserFeedback } from "@/lib/orchestrator/apply-user-feedback";
-import { findSession, getDataset, getRevision } from "@/lib/store";
+import { findSession, getDataset, getRevision, acquireFeedbackLock } from "@/lib/store";
 
 function request(revisionId: string, message = "改标题"): NextRequest {
   return new NextRequest("http://localhost/api/analysis/s1/feedback", {
@@ -62,5 +64,12 @@ describe("反馈 Route", () => {
     const text = await response.text();
     const events = [...text.matchAll(/^event: (.+)$/gm)].map((match) => match[1]);
     expect(events).toEqual(["revision", "final", "done"]);
+  });
+
+  it("acquireFeedbackLock 返回 false 时立即 409，不启动 Patch", async () => {
+    vi.mocked(acquireFeedbackLock).mockReturnValueOnce(false);
+    const response = await POST(request("r2"), { params: Promise.resolve({ sessionId: "s1" }) });
+    expect(response.status).toBe(409);
+    expect(applyUserFeedback).not.toHaveBeenCalled();
   });
 });

@@ -29,6 +29,8 @@ export interface ParsedData {
   storedRowCount: number;
   quality: DataQualityReport;
   sheetName?: string;
+  /** Excel 文件中所有可用的工作表名（仅 Excel 来源；CSV 为 undefined）。 */
+  availableSheets?: string[];
 }
 
 /* ----------------------------- 字段角色推断 ----------------------------- */
@@ -261,23 +263,33 @@ interface RawSheet {
   fields: string[];
   matrix: unknown[][];
   sheetName?: string;
+  availableSheets?: string[];
 }
 
-function parseExcel(buffer: Buffer): RawSheet {
+/** 列出 Excel 工作簿中所有 Sheet 名（不解析内容）。 */
+export function listExcelSheets(buffer: Buffer): string[] {
   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
-  const firstSheet = wb.SheetNames[0];
-  if (!firstSheet) throw new Error("Excel 中没有可读取的工作表");
-  const ws = wb.Sheets[firstSheet];
+  return wb.SheetNames.slice();
+}
+
+function parseExcel(buffer: Buffer, sheetName?: string): RawSheet {
+  const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  const availableSheets = wb.SheetNames.slice();
+  const target = sheetName && availableSheets.includes(sheetName)
+    ? sheetName
+    : availableSheets[0];
+  if (!target) throw new Error("Excel 中没有可读取的工作表");
+  const ws = wb.Sheets[target];
   const matrix = XLSX.utils.sheet_to_json(ws, {
     header: 1,
     defval: null,
     raw: true,
   }) as unknown[][];
-  if (matrix.length === 0) return { fields: [], matrix: [], sheetName: firstSheet };
+  if (matrix.length === 0) return { fields: [], matrix: [], sheetName: target, availableSheets };
   const fields = (matrix[0] as unknown[]).map((c) =>
     c == null ? "" : String(c),
   );
-  return { fields, matrix: matrix.slice(1), sheetName: firstSheet };
+  return { fields, matrix: matrix.slice(1), sheetName: target, availableSheets };
 }
 
 function parseCsv(text: string): RawSheet {
@@ -303,14 +315,18 @@ function keepColumnIndices(fields: string[]): number[] {
     .filter((i) => i >= 0);
 }
 
-export function parseBuffer(buffer: Buffer, fileName: string): ParsedData {
+export function parseBuffer(
+  buffer: Buffer,
+  fileName: string,
+  options?: { sheetName?: string },
+): ParsedData {
   const lower = fileName.toLowerCase();
   let raw: RawSheet;
   let source: "csv" | "excel";
 
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
     source = "excel";
-    raw = parseExcel(buffer);
+    raw = parseExcel(buffer, options?.sheetName);
   } else if (lower.endsWith(".csv") || lower.endsWith(".txt")) {
     source = "csv";
     raw = parseCsv(buffer.toString("utf-8"));
@@ -371,5 +387,6 @@ export function parseBuffer(buffer: Buffer, fileName: string): ParsedData {
     storedRowCount,
     quality,
     sheetName: raw.sheetName,
+    availableSheets: raw.availableSheets,
   };
 }
