@@ -33,13 +33,14 @@ function jsonResponse(
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const requestId = newRequestId();
-  if (!isValidDatasetId(params.id)) {
+  const { id } = await params;
+  if (!isValidDatasetId(id)) {
     return jsonResponse(400, "BAD_REQUEST", "数据集 ID 不是合法 UUID", requestId);
   }
-  const ds = await getDataset(params.id);
+  const ds = await getDataset(id);
   if (!ds) {
     return jsonResponse(404, "NOT_FOUND", "数据集不存在", requestId);
   }
@@ -54,7 +55,7 @@ export async function POST(
 
   // 复用已有理解（非强制且已存在有效结果）
   if (!force) {
-    const existing = await getUnderstanding(params.id);
+    const existing = await getUnderstanding(id);
     if (existing) {
       const stream = new ReadableStream({
         start(controller) {
@@ -96,16 +97,16 @@ export async function POST(
       try {
         send("stage", { stage: "正在构建数据上下文" });
         send("stage", { stage: "AI 正在理解数据" });
-        logger.info("understanding_route_started", { requestId, datasetId: params.id });
+        logger.info("understanding_route_started", { requestId, datasetId: id });
 
         const result = await understandDataset(ds, requestId, {
           userDescription: body.userDescription,
           force,
         });
         // DataContext 在 LLM 关闭或理解失败时也必须保留，便于重试与审计。
-        await saveContext(params.id, result.context);
+        await saveContext(id, result.context);
         if (result.understanding) {
-          await saveUnderstanding(params.id, result.understanding);
+          await saveUnderstanding(id, result.understanding);
           if (result.status === "needs_user_input") {
             send("ambiguity", { understanding: result.understanding });
           } else {
@@ -122,7 +123,7 @@ export async function POST(
         const message = err instanceof Error ? err.message : "数据理解失败";
         logger.error("understanding_route_failed", {
           requestId,
-          datasetId: params.id,
+          datasetId: id,
           message,
         });
         send("error", { message });

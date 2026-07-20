@@ -24,14 +24,15 @@ export const dynamic = "force-dynamic";
  */
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const requestId = newRequestId();
   try {
-    if (!isValidDatasetId(params.id)) {
+    const { id } = await params;
+    if (!isValidDatasetId(id)) {
       throw new BadRequestError("数据集 ID 不是合法 UUID");
     }
-    const existing = await getDataset(params.id);
+    const existing = await getDataset(id);
     if (!existing) throw new NotFoundError("数据集不存在");
 
     let body: unknown;
@@ -58,7 +59,7 @@ export async function PUT(
     }
 
     const updated = await updateDatasetConfig(
-      params.id,
+      id,
       parsed.data.columns,
       parsed.data.analysisConfig as DatasetAnalysisConfig | undefined,
     );

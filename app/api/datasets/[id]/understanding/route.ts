@@ -26,14 +26,15 @@ export const dynamic = "force-dynamic";
 /** GET /api/datasets/{id}/understanding：返回当前理解（无则 understanding=null） */
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const requestId = newRequestId();
   try {
-    if (!isValidDatasetId(params.id)) {
+    const { id } = await params;
+    if (!isValidDatasetId(id)) {
       throw new BadRequestError("数据集 ID 不是合法 UUID");
     }
-    const understanding = await getUnderstanding(params.id);
+    const understanding = await getUnderstanding(id);
     return ok({ understanding, hasUnderstanding: understanding !== null });
   } catch (err) {
     return fail(err, requestId);
@@ -62,14 +63,15 @@ interface PutBody {
  */
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const requestId = newRequestId();
   try {
-    if (!isValidDatasetId(params.id)) {
+    const { id } = await params;
+    if (!isValidDatasetId(id)) {
       throw new BadRequestError("数据集 ID 不是合法 UUID");
     }
-    const existing = await getUnderstanding(params.id);
+    const existing = await getUnderstanding(id);
     if (!existing) {
       throw new NotFoundError("尚未进行 AI 数据理解，无法修改");
     }
@@ -134,17 +136,17 @@ export async function PUT(
       updated = confirmUnderstanding(updated, new Date().toISOString());
     }
 
-    await saveUnderstanding(params.id, updated);
+    await saveUnderstanding(id, updated);
     logger.info("understanding_updated", {
       requestId,
-      datasetId: params.id,
+      datasetId: id,
       status: updated.status,
       confirm: !!body.confirm,
     });
     if (body.confirm) {
       logger.info("understanding_confirmed", {
         requestId,
-        datasetId: params.id,
+        datasetId: id,
         understandingId: updated.id,
       });
     }

@@ -15,13 +15,14 @@ interface FeedbackBody {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { sessionId: string } },
+  { params }: { params: Promise<{ sessionId: string }> },
 ) {
   const requestId = newRequestId();
   let body: FeedbackBody;
   let located: Awaited<ReturnType<typeof findSession>>;
   let dataset: Awaited<ReturnType<typeof getDataset>>;
   let baseRevision: Awaited<ReturnType<typeof getRevision>>;
+  const { sessionId } = await params;
   try {
     try {
       body = (await request.json()) as FeedbackBody;
@@ -32,7 +33,7 @@ export async function POST(
     if (!message) throw new BadRequestError("修改要求不能为空");
     if (message.length > 4000) throw new BadRequestError("修改要求不能超过 4000 字符");
     if (!body.revisionId) throw new BadRequestError("缺少 revisionId");
-    located = await findSession(params.sessionId);
+    located = await findSession(sessionId);
     if (!located) throw new NotFoundError("分析 Session 不存在");
     if (located.session.activeRevisionId !== body.revisionId) {
       throw new ConflictError("当前 Revision 已变化，请刷新后重试", {
@@ -41,7 +42,7 @@ export async function POST(
     }
     dataset = await getDataset(located.datasetId);
     if (!dataset) throw new NotFoundError("数据集不存在");
-    baseRevision = await getRevision(located.datasetId, params.sessionId, body.revisionId);
+    baseRevision = await getRevision(located.datasetId, sessionId, body.revisionId);
     if (!baseRevision) throw new NotFoundError("当前 Revision 不存在");
   } catch (err) {
     return fail(err, requestId);
@@ -59,7 +60,7 @@ export async function POST(
         logger.info("feedback_received", {
           requestId,
           datasetId: located!.datasetId,
-          sessionId: params.sessionId,
+          sessionId,
           revisionId: baseRevision!.id,
         });
         const result = await applyUserFeedback({
@@ -118,7 +119,7 @@ export async function POST(
         const message = err instanceof Error ? err.message : "修改失败";
         logger.warn("feedback_patch_rejected", {
           requestId,
-          sessionId: params.sessionId,
+          sessionId,
           message,
         });
         send("error", { message });

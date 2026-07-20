@@ -9,17 +9,18 @@ export const dynamic = "force-dynamic";
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { sessionId: string } },
+  { params }: { params: Promise<{ sessionId: string }> },
 ) {
   const requestId = newRequestId();
   try {
-    if (!params.sessionId) throw new BadRequestError("缺少 sessionId");
-    const located = await findSession(params.sessionId);
+    const { sessionId } = await params;
+    if (!sessionId) throw new BadRequestError("缺少 sessionId");
+    const located = await findSession(sessionId);
     if (!located) throw new NotFoundError("分析 Session 不存在");
-    const revisions = await listRevisions(located.datasetId, params.sessionId);
+    const revisions = await listRevisions(located.datasetId, sessionId);
     const activeRevision = await getRevision(
       located.datasetId,
-      params.sessionId,
+      sessionId,
       located.session.activeRevisionId,
     );
     return ok({

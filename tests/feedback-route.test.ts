@@ -33,13 +33,13 @@ beforeEach(() => {
 
 describe("反馈 Route", () => {
   it("stale baseRevisionId 返回 409，且不启动 Patch", async () => {
-    const response = await POST(request("r1"), { params: { sessionId: "s1" } });
+    const response = await POST(request("r1"), { params: Promise.resolve({ sessionId: "s1" }) });
     expect(response.status).toBe(409);
     expect(applyUserFeedback).not.toHaveBeenCalled();
   });
 
   it("输入超过 4000 字符返回 400", async () => {
-    const response = await POST(request("r2", "x".repeat(4001)), { params: { sessionId: "s1" } });
+    const response = await POST(request("r2", "x".repeat(4001)), { params: Promise.resolve({ sessionId: "s1" }) });
     expect(response.status).toBe(400);
     expect(applyUserFeedback).not.toHaveBeenCalled();
   });
@@ -58,7 +58,7 @@ describe("反馈 Route", () => {
         impact: { presentationOnly: true, requiresPlanRebuild: false, affectedTaskIds: [], reusedTaskIds: ["t1"], reasons: [] },
       } as never;
     });
-    const response = await POST(request("r2"), { params: { sessionId: "s1" } });
+    const response = await POST(request("r2"), { params: Promise.resolve({ sessionId: "s1" }) });
     const text = await response.text();
     const events = [...text.matchAll(/^event: (.+)$/gm)].map((match) => match[1]);
     expect(events).toEqual(["revision", "final", "done"]);

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import FieldConfigTable, {
   type EditableField,
@@ -73,13 +73,10 @@ function cloneFields(fields: EditableField[]): EditableField[] {
   return fields.map((f) => ({ ...f, sampleValues: [...f.sampleValues] }));
 }
 
-export default function ImportPreviewPage({
-  params,
-}: {
-  params: { draftId: string };
-}) {
+export default function ImportPreviewPage() {
   const router = useRouter();
-  const draftId = params.draftId;
+  const params = useParams();
+  const draftId = String(params.draftId);
 
   const [data, setData] = useState<PreviewDetail | null>(null);
   const [loading, setLoading] = useState(true);

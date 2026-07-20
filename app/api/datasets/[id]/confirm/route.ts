@@ -30,14 +30,15 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const requestId = newRequestId();
   try {
-    if (!isValidDatasetId(params.id)) {
+    const { id } = await params;
+    if (!isValidDatasetId(id)) {
       throw new BadRequestError("数据集 ID 不是合法 UUID");
     }
-    const existing = await getDataset(params.id);
+    const existing = await getDataset(id);
     if (!existing) throw new NotFoundError("数据集不存在");
 
     if (existing.status && existing.status !== "draft") {
@@ -88,7 +89,7 @@ export async function POST(
     }
 
     const updated = await reconfigureAndConfirm(
-      params.id,
+      id,
       submittedColumns,
       analysisConfig,
     );
@@ -97,19 +98,19 @@ export async function POST(
     if (submittedColumns) {
       logger.info("dataset_reconfigured", {
         requestId,
-        datasetId: params.id,
+        datasetId: id,
         columnCount: submittedColumns.length,
       });
     }
     logger.info("dataset_confirmed", {
       requestId,
-      datasetId: params.id,
+      datasetId: id,
       status: updated.status,
       columnCount: updated.columns.length,
     });
     logger.info("dataset_normalized", {
       requestId,
-      datasetId: params.id,
+      datasetId: id,
       rowCount: updated.rows.length,
       qualityWarnings: updated.quality?.warnings.length ?? 0,
     });

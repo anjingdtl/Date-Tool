@@ -21,9 +21,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
-    environmentMatchGlobs: [
-      ["tests/**/*.dom.test.tsx", "jsdom"],
-    ],
+    // 需要 jsdom 的测试文件命名为 *.dom.test.tsx，并在文件顶部加：
+    //   // @vitest-environment jsdom
+    // （vitest 4 移除了 environmentMatchGlobs，改用文件级 pragma）
     // 测试共享同一个临时 DATA_DIR，部分用例会清理 datasets/ 目录。
     // 文件并行会在 saveJsonAtomic 的 rename 阶段产生竞态（ENOENT），
     // 因此强制串行执行，保证文件系统状态隔离。

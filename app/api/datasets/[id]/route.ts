@@ -16,14 +16,15 @@ const PREVIEW_MODE_ROWS = 20;
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const requestId = newRequestId();
   try {
-    if (!isValidDatasetId(params.id)) {
+    const { id } = await params;
+    if (!isValidDatasetId(id)) {
       throw new BadRequestError("数据集 ID 不是合法 UUID");
     }
-    const ds = await getDataset(params.id);
+    const ds = await getDataset(id);
     if (!ds) throw new NotFoundError("数据集不存在");
 
     // v0.2 阶段 D：?mode=preview 用于预检页，返回前 20 行 + columns + config + quality
@@ -67,14 +68,15 @@ export async function GET(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const requestId = newRequestId();
   try {
-    if (!isValidDatasetId(params.id)) {
+    const { id } = await params;
+    if (!isValidDatasetId(id)) {
       throw new BadRequestError("数据集 ID 不是合法 UUID");
     }
-    const okDeleted = await deleteDataset(params.id);
+    const okDeleted = await deleteDataset(id);
     if (!okDeleted) throw new NotFoundError("数据集不存在");
     return ok({ deleted: true });
   } catch (err) {
