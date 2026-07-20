@@ -406,7 +406,20 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {runError && <div className="banner error">{runError}</div>}
+      {runError && (
+        <div className="banner error" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <span>{runError}</span>
+          <button
+            className="btn"
+            style={{ padding: "4px 12px", fontSize: 13 }}
+            onClick={() => void startAnalysis(false)}
+            disabled={streaming || feedbackBusy}
+            title="重新运行分析"
+          >
+            重试
+          </button>
+        </div>
+      )}
 
       <AnalysisTimeline events={timeline} active={streaming || feedbackBusy} />
       <AnalysisTaskStatus tasks={tasks} />

@@ -307,8 +307,9 @@ export default function ImportPreviewPage() {
   /* —— 快捷操作（SPEC 9.6） —— */
 
   function acceptAll() {
-    // 接受当前推断：相当于清除 userModified 提示，但保留当前值
-    setBanner({ type: "ok", msg: "已接受当前全部推断，可直接生成看板。" });
+    // 接受当前推断：等同于保存当前字段配置（含 userModified 标记）并触发服务端最终校验。
+    // 不再是死按钮——按下后字段会被显式持久化，校验问题会立刻显示。
+    void saveConfig();
   }
 
   function resetAll() {
@@ -756,7 +757,7 @@ export default function ImportPreviewPage() {
           <div
             className={`banner ${
               banner.type === "ok"
-                ? "warn"
+                ? "ok"
                 : banner.type === "warn"
                   ? "warn"
                   : "error"

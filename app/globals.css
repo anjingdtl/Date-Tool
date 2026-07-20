@@ -1043,6 +1043,11 @@ table.data tr:hover td {
   border-color: rgba(212, 165, 116, 0.35);
   color: #e2c49c;
 }
+.banner.ok {
+  background: rgba(122, 184, 138, 0.14);
+  border-color: rgba(122, 184, 138, 0.32);
+  color: #b6d8bd;
+}
 .banner.error {
   background: rgba(201, 122, 110, 0.14);
   border-color: rgba(201, 122, 110, 0.32);
