@@ -155,12 +155,20 @@ export async function analyzeDataset(
   } catch (err) {
     // 计划生成/校验等编排步骤失败时不得让可用的本地分析一起失败。
     // runAnalysisSession 只会在最终成功时发 final，因此这里不会产生伪双 final。
+    const errMsg = err instanceof Error ? err.message : "unknown";
     logger.warn("orchestrator_failed_fallback_local", {
       requestId,
       datasetId: ds.id,
-      message: err instanceof Error ? err.message : "unknown",
+      message: errMsg,
     });
-    hooks.onStage?.("AI 编排不可用，正在切换到本地规则模式", "fallback");
+    // 区分「Session 上限触发」和「真实编排失败」，避免误导用户以为 LLM 不可用。
+    const isSessionLimit = errMsg.includes("Session 数量已达到上限");
+    hooks.onStage?.(
+      isSessionLimit
+        ? `已达 Session 上限，本次以本地规则模式继续（不影响已有结果，可清理旧 Session 后重试 LLM 模式）`
+        : "AI 编排不可用，正在切换到本地规则模式",
+      isSessionLimit ? "fallback_session_limit" : "fallback",
+    );
     return runLocalFallbackAnalysis(ds, requestId, hooks);
   }
 }
